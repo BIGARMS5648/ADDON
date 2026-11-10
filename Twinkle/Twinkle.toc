@@ -1,0 +1,13 @@
+## Interface: 16001
+## Title: Twinkle |cffffd100(반짝이)|r
+## Notes: Makes quest objects, herbs and ore sparkle.
+## Notes-koKR: 퀘스트 오브젝트와 약초·광맥을 반짝이게 표시합니다.
+## Version: 1.0.0
+## IconTexture: Interface\AddOns\Twinkle\Media\star
+## SavedVariables: TwinkleDB
+
+Locale.lua
+Data.lua
+Sparkle.lua
+Core.lua
+Options.lua
