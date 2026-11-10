@@ -67,6 +67,10 @@ mock.cvars = {
     SoftTargetInteractRange = "10.000000",
     SoftTargetInteractArc = "0",
     SoftTargetIconGameObject = "0",
+    SoftTargetIconInteract = "1",
+    interactKeyWarningTutorial = "0",
+    softTargetInteractionTutorialTotalInteractions = "0",
+    cameraFov = "90.000000",
     Outline = "0",
     outlineModeShowLootEffectWhenDisabled = "0",
 }
@@ -126,7 +130,7 @@ function Region:HookScript(name, fn)
 end
 function Region:GetWidth() return self.width end
 function Region:GetHeight() return self.height end
-function Region:GetCenter() return self.centerX or 0, self.centerY or 0 end
+function Region:GetCenter() return self.centerX, self.centerY end
 function Region:GetEffectiveScale() return 1 end
 function Region:SetFrameStrata(s) self.strata = s end
 function Region:RegisterForClicks(...) self.clicks = { ... } end
@@ -260,23 +264,11 @@ end
 -- World positions ------------------------------------------------------------
 -- world x points north, y points west; facing is radians counterclockwise from north
 mock.player = { x = 0, y = 0, facing = 0 }
-mock.objects = {} -- [objectID] = { x =, y = } (closest node of that kind)
-mock.swapObjectXY = false
-mock.secretPositions = false
-
 function UnitPosition(u)
     if u ~= "player" then return nil end
     return mock.player.x, mock.player.y, 0, 0
 end
 function GetPlayerFacing() return mock.player.facing end
-function ClosestGameObjectPosition(id)
-    local o = mock.objects[id]
-    if not o then return end
-    if mock.secretPositions then return SECRET, SECRET, SECRET end
-    local dist = math.sqrt((o.x - mock.player.x) ^ 2 + (o.y - mock.player.y) ^ 2)
-    if mock.swapObjectXY then return o.y, o.x, dist end
-    return o.x, o.y, dist
-end
 
 -- Spells / quests ------------------------------------------------------------
 mock.spellNames = { [2366] = "약초 채집", [2575] = "채광" }

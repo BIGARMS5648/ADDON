@@ -25,23 +25,37 @@ local DEFAULTS = {
     show = { QUEST = true, HERB = true, ORE = true, LOOT = true, WATCH = true, OTHER = false },
     range = 20,
     arc = 2,
-    size = 72,
-    offsetY = -16,
+    size = 40,
+    offsetY = -30,
     showLabel = false,
     hud = true,
     hudY = 160,
     sound = false,
-    blizzIcon = true,
+    blizzIcon = false,
     questNameMatch = true,
-    radar = true, -- markers for herbs / ore behind or beside you
+    radar = true, -- keep sparkles at the screen edge after turning away
     minimap = { hide = false, angle = 225 },
     debug = false,
     watch = {}, -- [lowercase name] = name as typed
     learned = {}, -- [object name] = "HERB" | "ORE"
-    nodes = {}, -- [object ID] = { category =, name = } seen in game, used by the radar
     savedCVars = {}, -- original values of CVars we changed
 }
 ns.DEFAULTS = DEFAULTS
+
+-- Saved settings from older versions: move values that were the old
+-- defaults to the new ones, keep anything the player chose.
+local DB_VERSION = 2
+function ns.Migrate(saved)
+    local version = saved.dbVersion or 1
+    if version < 2 then
+        if saved.size == 72 then saved.size = 40 end
+        if saved.offsetY == -16 then saved.offsetY = -30 end
+        if saved.blizzIcon == true then saved.blizzIcon = false end
+        saved.nodes = nil -- used by the 1.1 radar, which the game never fed
+    end
+    saved.dbVersion = DB_VERSION
+    return saved
+end
 
 -- Every CVar the addon may touch. Missing ones are skipped.
 local MANAGED_CVARS = {
@@ -50,6 +64,7 @@ local MANAGED_CVARS = {
     "SoftTargetInteractRange",
     "SoftTargetInteractArc",
     "SoftTargetIconGameObject",
+    "SoftTargetIconInteract",
     "Outline",
     "outlineModeShowLootEffectWhenDisabled",
 }
@@ -160,6 +175,10 @@ local function DesiredCVars()
         want.SoftTargetInteractArc = tostring(db.arc)
         if db.blizzIcon then
             want.SoftTargetIconGameObject = "1"
+        else
+            -- keep the look of interact targeting being off: no icons over NPCs or objects
+            want.SoftTargetIconGameObject = "0"
+            want.SoftTargetIconInteract = "0"
         end
     end
     if db.questStyle == "sparkle" then
@@ -200,9 +219,25 @@ local function PendingCVarChanges()
     return changes
 end
 
+-- Interact targeting comes with "press your interact key" help tips and a
+-- warning when no key is bound. The sparkle doesn't need the key, so mark
+-- those as already seen. (Not restored: they are only tutorial flags.)
+local function SuppressInteractTutorials()
+    if GetCVarValue("interactKeyWarningTutorial") == "0" then
+        C_CVar.SetCVar("interactKeyWarningTutorial", "1")
+    end
+    local seen = tonumber(GetCVarValue("softTargetInteractionTutorialTotalInteractions"))
+    if seen and seen < 2 then
+        C_CVar.SetCVar("softTargetInteractionTutorialTotalInteractions", "2")
+    end
+end
+
 function ns:ApplyCVars()
     if not db then
         return
+    end
+    if db.enabled and db.softEnabled then
+        SuppressInteractTutorials()
     end
     if C_CVar.AreCVarsLoaded and not C_CVar.AreCVarsLoaded() then
         needApply = true
@@ -318,14 +353,6 @@ end
 
 -- Returns category, info (info is for /tw debug).
 function ns:Classify(unit)
-    local category, info = self:ClassifyUncached(unit)
-    if info.source ~= "quest objective" then
-        self:RememberNode(info.id, category, info.name)
-    end
-    return category, info
-end
-
-function ns:ClassifyUncached(unit)
     local name = Safe(UnitName(unit))
     local guid = Safe(UnitGUID(unit))
     local _, id = ParseGUID(guid)
@@ -434,7 +461,15 @@ function ns:UpdatePlate(unit)
         active[unit] = fx
         self:Announce(category, info)
     end
+    fx.guid, fx.objectName = info.guid, info.name
     fx:Play(plate, category, db.showLabel and L["CAT_" .. category] or nil, db.size, 0, db.offsetY)
+end
+
+-- fn(unit, fx) for every sparkle currently on a nameplate
+function ns:ForEachActive(fn)
+    for unit, fx in pairs(active) do
+        fn(unit, fx)
+    end
 end
 
 local function IsSameUnit(a, b)
@@ -493,8 +528,8 @@ end
 function ns:OnSettingsChanged()
     self:ApplyCVars()
     self:RefreshAll()
-    if self.Radar then
-        self.Radar:Refresh()
+    if self.Memory then
+        self.Memory:Refresh()
     end
     if self.MinimapButton then
         self.MinimapButton:Update()
@@ -538,7 +573,7 @@ function ns:ADDON_LOADED(name)
     end
     events:UnregisterEvent("ADDON_LOADED")
     TwinkleDB = TwinkleDB or {}
-    db = CopyDefaults(DEFAULTS, TwinkleDB)
+    db = ns.Migrate(CopyDefaults(DEFAULTS, TwinkleDB))
     ns.db = db
 
     Register("PLAYER_LOGIN")
@@ -583,6 +618,9 @@ function ns:VARIABLES_LOADED()
 end
 
 function ns:PLAYER_ENTERING_WORLD()
+    if self.Memory then
+        self.Memory:Clear()
+    end
     self:ApplyCVars()
     self:QueueRefresh(0.5)
 end
@@ -631,7 +669,13 @@ function ns:UNIT_SPELLCAST_SENT(unit, target, _, spellID)
         return
     end
     target, spellID = Safe(target), Safe(spellID)
-    if type(target) ~= "string" or target == "" or not spellID then
+    if type(target) ~= "string" or target == "" then
+        return
+    end
+    if self.Memory then
+        self.Memory:OnCastAt(target, GetTime())
+    end
+    if not spellID then
         return
     end
     local category = Data.GATHER_SPELLS[spellID]
@@ -676,8 +720,8 @@ function ns:DebugReport()
     end
     Print(("  sparkles on nameplates: %d, screen alert: %s"):format(count, tostring(Sparkle.IsHudShown())))
     Print("  " .. cvars())
-    if self.Radar then
-        self.Radar:DebugReport()
+    if self.Memory then
+        self.Memory:DebugReport()
     end
     local unknown = {}
     for key, name in pairs(ns.unknownCursors) do

@@ -102,7 +102,7 @@ function ns:CreateOptions()
     Checkbox("showLabel", L.SHOW_LABEL)
     Checkbox("hud", L.HUD, L.HUD_TT)
     Checkbox("sound", L.SOUND)
-    Checkbox("blizzIcon", L.BLIZZ_ICON)
+    Checkbox("blizzIcon", L.BLIZZ_ICON, L.BLIZZ_ICON_TT)
     Checkbox("questNameMatch", L.QUEST_NAME_MATCH, L.QUEST_NAME_MATCH_TT)
 
     local minimapSetting = Proxy("minimap", Settings.VarType.Boolean, L.MINIMAP_SHOW, true,

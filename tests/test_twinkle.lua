@@ -66,7 +66,13 @@ test("loads and applies CVars on login", function()
     eq(mock.cvars.SoftTargetNameplateInteract, "1", "SoftTargetNameplateInteract")
     eq(tonumber(mock.cvars.SoftTargetInteractRange), 20, "range")
     eq(mock.cvars.SoftTargetInteractArc, "2", "arc")
-    eq(mock.cvars.SoftTargetIconGameObject, "1", "icon")
+    eq(mock.cvars.SoftTargetIconGameObject, "0", "no object icons")
+    eq(mock.cvars.SoftTargetIconInteract, "0", "no NPC icons")
+    eq(mock.cvars.interactKeyWarningTutorial, "1", "no 'interact key not bound' warning")
+    eq(mock.cvars.softTargetInteractionTutorialTotalInteractions, "2", "no interact help tips")
+    eq(db.size, 40, "default size")
+    eq(db.offsetY, -30, "default vertical position")
+    eq(db.dbVersion, 2, "settings version")
     eq(mock.cvars.Outline, "0", "Outline")
     eq(mock.cvars.outlineModeShowLootEffectWhenDisabled, "1", "loot sparkle")
     eq(db.savedCVars.SoftTargetInteract, "1", "original saved")
@@ -289,6 +295,7 @@ test("/tw off restores every CVar and removes sparkles", function()
     eq(tonumber(mock.cvars.SoftTargetInteractRange), 10, "range restored")
     eq(mock.cvars.SoftTargetInteractArc, "0", "arc restored")
     eq(mock.cvars.SoftTargetIconGameObject, "0", "icon restored")
+    eq(mock.cvars.SoftTargetIconInteract, "1", "NPC icons restored")
     eq(mock.cvars.outlineModeShowLootEffectWhenDisabled, "0", "loot sparkle restored")
     eq(next(TwinkleDB.savedCVars), nil, "nothing left to restore")
     eq(fxOn(plate), nil, "sparkle removed")
@@ -439,9 +446,44 @@ test("addon compartment entry", function()
     eq(GameTooltip.shown, false, "tooltip hidden")
 end)
 
--- radar (herbs / ore behind you) -------------------------------------------------
+-- settings from older versions ----------------------------------------------------
 
-local function radarMarkers()
+test("old default size and position move to the new defaults", function()
+    local saved = ns.Migrate({ size = 72, offsetY = -16, blizzIcon = true, nodes = { [1] = {} } })
+    eq(saved.size, 40, "size")
+    eq(saved.offsetY, -30, "vertical position")
+    eq(saved.blizzIcon, false, "icons")
+    eq(saved.nodes, nil, "old radar data dropped")
+    eq(saved.dbVersion, 2, "version")
+end)
+
+test("values the player chose are kept", function()
+    local saved = ns.Migrate({ size = 60, offsetY = -50 })
+    eq(saved.size, 60, "size")
+    eq(saved.offsetY, -50, "vertical position")
+    saved = ns.Migrate({ dbVersion = 2, size = 72, offsetY = -16, blizzIcon = true })
+    eq(saved.size, 72, "already migrated: untouched")
+    eq(saved.blizzIcon, true, "already migrated: untouched")
+end)
+
+test("game interact icons can be turned back on", function()
+    mock.settings.TWINKLE_blizzIcon.set(true)
+    eq(mock.cvars.SoftTargetIconGameObject, "1", "object icons")
+    eq(mock.cvars.SoftTargetIconInteract, "1", "NPC icons back to the player's own value")
+    mock.settings.TWINKLE_blizzIcon.set(false)
+    eq(mock.cvars.SoftTargetIconInteract, "0", "hidden again")
+end)
+
+-- keep sparkling after turning away -------------------------------------------------
+
+local SCREEN_W = 1366
+
+-- screen x of an object `angle` radians to the right of the middle of the view
+local function screenX(angle)
+    return (math.tan(angle) / math.tan(math.rad(45)) + 1) / 2 * SCREEN_W
+end
+
+local function edgeMarkers()
     local list = {}
     for _, f in ipairs(mock.frames) do
         if f.isRadar and f.shown then list[#list + 1] = f end
@@ -449,116 +491,166 @@ local function radarMarkers()
     return list
 end
 
-local function radar()
-    ns.Radar:Scan()
-    ns.Radar:Update()
-    return radarMarkers()
+local function tick(dt)
+    mock.time = mock.time + (dt or 0.1)
+    ns.Memory:Tick(mock.time)
+    return edgeMarkers()
 end
 
-local function marker(m)
+local function markerPos(m)
     local p = m.points[#m.points]
     return p[4], p[5]
 end
 
-test("herb behind you sparkles below the character", function()
+local function showHerb(token, name, spawn, x)
+    local plate = mock.addPlate(token, { name = name, guid = guid(1617, spawn), gameObject = true, cursor = 131018 })
+    plate.centerX = x or SCREEN_W / 2
+    return plate
+end
+
+local function resetMemory()
+    ns.Memory:Clear()
     mock.settings.TWINKLE_range.set(20)
-    mock.player = { x = 0, y = 0, facing = 0 } -- facing north
-    mock.objects = { [1617] = { x = -8, y = 0 } } -- 8 yards south
-    local list = radar()
-    eq(#list, 1, "one marker")
-    eq(list[1].category, "HERB", "herb color")
-    local x, y = marker(list[1])
-    assert(math.abs(x) < 0.01 and y < -200, "below the character: " .. x .. ", " .. y)
-    assert(list[1].label.text:find("8", 1, true), "distance in the label")
-end)
-
-test("herb in front is left to the nameplate sparkle", function()
-    mock.objects = { [1617] = { x = 8, y = 0 } }
-    eq(#radar(), 0, "no marker straight ahead")
-end)
-
-test("herb to the left and right", function()
-    mock.objects = { [1617] = { x = 0, y = 8 } } -- west = left when facing north
-    local x = marker(radar()[1])
-    assert(x < -200, "left side: " .. x)
-    mock.objects = { [1617] = { x = 0, y = -8 } } -- east = right
-    x = marker(radar()[1])
-    assert(x > 200, "right side: " .. x)
-end)
-
-test("turning around brings a herb from behind to the front", function()
-    mock.objects = { [1617] = { x = -8, y = 0 } }
-    eq(#radar(), 1, "behind while facing north")
-    mock.player.facing = math.pi -- now facing south
-    eq(#radar(), 0, "in front after turning around")
-    mock.player.facing = 0
-end)
-
-test("only nodes inside the detection range", function()
-    mock.objects = { [1617] = { x = -25, y = 0 }, [1731] = { x = -10, y = 3 } }
-    local list = radar()
-    eq(#list, 1, "far herb ignored")
-    eq(list[1].category, "ORE", "close ore shown")
-end)
-
-test("radar respects category toggles and its own switch", function()
-    mock.objects = { [1731] = { x = -10, y = 0 } }
-    mock.settings.TWINKLE_SHOW_ORE.set(false)
-    eq(#radar(), 0, "ore hidden when ore sparkles are off")
-    mock.settings.TWINKLE_SHOW_ORE.set(true)
-    eq(#radar(), 1, "back")
-    mock.settings.TWINKLE_radar.set(false)
-    eq(#radarMarkers(), 0, "markers removed when the radar is turned off")
-    eq(#radar(), 0, "nothing while off")
-    mock.settings.TWINKLE_radar.set(true)
-end)
-
-test("radar copes with swapped coordinate order", function()
-    mock.swapObjectXY = true
-    ns.Radar.status.swapped = nil
-    mock.player = { x = -9120.5, y = 380.25, facing = 0 } -- somewhere in Elwynn
-    mock.objects = { [1617] = { x = -9117.5, y = 392.25 } } -- 12 yards west (left), 3 north
-    local x = marker(radar()[1])
-    eq(ns.Radar.status.swapped, true, "detected")
-    assert(x < -200, "still on the left: " .. x)
-    mock.swapObjectXY = false
-    ns.Radar.status.swapped = nil
     mock.player = { x = 0, y = 0, facing = 0 }
+end
+
+test("a herb keeps sparkling below the character after turning around", function()
+    resetMemory()
+    showHerb("nameplate30", "은엽수", 30)
+    eq(#tick(), 0, "on screen: only the nameplate sparkle")
+    mock.removePlate("nameplate30")
+    mock.player.facing = math.pi -- turned around
+    local list = tick(0.5)
+    eq(#list, 1, "edge sparkle")
+    eq(list[1].category, "HERB", "herb color")
+    local x, y = markerPos(list[1])
+    assert(math.abs(x) < 0.01 and y < -200, "below the character: " .. x .. ", " .. y)
+    assert(list[1].label.text:find("은엽수", 1, true), "named")
+    mock.player.facing = 0 -- turned back
+    eq(#tick(), 0, "in front again: no edge sparkle")
 end)
 
-test("radar does nothing with secret positions", function()
-    mock.objects = { [1617] = { x = -8, y = 0 } }
-    mock.secretPositions = true
-    eq(#radar(), 0, "no markers")
-    eq(ns.Radar.status.secret, true, "noted for /tw debug")
-    mock.secretPositions = false
+test("the herb's place on screen sets its direction", function()
+    resetMemory()
+    showHerb("nameplate31", "평온꽃", 31, screenX(math.rad(30))) -- 30 degrees right
+    tick()
+    mock.removePlate("nameplate31")
+    mock.player.facing = math.pi / 2 -- turned 90 degrees left
+    local x, y = markerPos(tick(0.5)[1])
+    assert(x > 0 and y < 0, "behind on the right: " .. x .. ", " .. y)
 end)
 
-test("radar learns new node IDs and names from nameplates", function()
-    local id = 555123
-    mock.addPlate("nameplate20", { name = "신비한 꽃", guid = guid(id), gameObject = true, cursor = 131018 })
-    mock.removePlate("nameplate20")
-    eq(TwinkleDB.nodes[id].category, "HERB", "remembered")
-    mock.objects = { [id] = { x = -6, y = 0 } }
-    local list = radar()
-    eq(#list, 1, "found by the learned ID")
-    assert(list[1].label.text:find("신비한 꽃", 1, true), "uses the learned name")
-    -- built-in IDs get names too once seen
-    mock.addPlate("nameplate21", { name = "은엽수", guid = guid(1617), gameObject = true, cursor = 131018 })
-    mock.removePlate("nameplate21")
-    mock.objects = { [1617] = { x = -6, y = 0 } }
-    assert(radar()[1].label.text:find("은엽수", 1, true), "named built-in node")
-    mock.objects = {}
-    eq(#radar(), 0, "cleared")
+test("gathered objects don't come back", function()
+    resetMemory()
+    showHerb("nameplate32", "마법초", 32)
+    tick()
+    mock.fire("UNIT_SPELLCAST_SENT", "player", "마법초", "Cast-20", 2366)
+    mock.removePlate("nameplate32")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 0, "no edge sparkle for a gathered herb")
 end)
 
-test("debug report includes the radar", function()
+test("walking away forgets a herb seen from one spot", function()
+    resetMemory()
+    showHerb("nameplate33", "찔레가시", 33)
+    tick()
+    mock.removePlate("nameplate33")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 1, "remembered")
+    mock.player.y = 15 -- walked 15 yards west
+    eq(#tick(), 0, "forgotten")
+end)
+
+test("seeing a herb from two spots gives its distance", function()
+    resetMemory()
+    -- herb at 10 yards north; look at it from 5 yards east, then 5 yards west
+    mock.player = { x = 0, y = -5, facing = 0 }
+    local plate = showHerb("nameplate34", "생채기풀", 34, screenX(-math.atan2(5, 10)))
+    tick()
+    mock.player.y = 5
+    plate.centerX = screenX(math.atan2(5, 10))
+    tick()
+    mock.removePlate("nameplate34")
+    -- walk past it: now 10 yards north of the herb, still facing north
+    mock.player = { x = 20, y = 0, facing = 0 }
+    local list = tick(0.5)
+    eq(#list, 1, "edge sparkle")
+    local x, y = markerPos(list[1])
+    assert(math.abs(x) < 1 and y < -200, "behind: " .. x .. ", " .. y)
+    assert(list[1].label.text:find("10", 1, true), "distance: " .. list[1].label.text)
+    mock.player.x = 60 -- far away now
+    eq(#tick(), 0, "forgotten when out of range")
+end)
+
+test("memories expire", function()
+    resetMemory()
+    showHerb("nameplate35", "황금가시", 35)
+    tick()
+    mock.removePlate("nameplate35")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 1, "remembered")
+    eq(#tick(181), 0, "expired")
+end)
+
+test("switches: keep-sparkling option and category toggles", function()
+    resetMemory()
+    showHerb("nameplate36", "왕꽃잎풀", 36)
+    tick()
+    mock.removePlate("nameplate36")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 1, "shown")
+    mock.settings.TWINKLE_radar.set(false)
+    eq(#edgeMarkers(), 0, "hidden when the option is off")
+    eq(#tick(), 0, "stays hidden")
+    mock.settings.TWINKLE_radar.set(true)
+    eq(#tick(), 1, "back")
+    mock.settings.TWINKLE_SHOW_HERB.set(false)
+    eq(#tick(), 0, "herbs off")
+    mock.settings.TWINKLE_SHOW_HERB.set(true)
+    eq(#tick(), 0, "forgotten while herbs were off")
+end)
+
+test("hidden nameplate position falls back to straight ahead", function()
+    resetMemory()
+    showHerb("nameplate37", "무덤이끼", 37, mock.SECRET)
+    tick()
+    mock.removePlate("nameplate37")
+    mock.player.facing = math.pi
+    local x, y = markerPos(tick(0.5)[1])
+    assert(math.abs(x) < 0.01 and y < -200, "behind")
+end)
+
+test("loading screens clear memories", function()
+    resetMemory()
+    showHerb("nameplate38", "야생 철쭉", 38)
+    tick()
+    mock.removePlate("nameplate38")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 1, "remembered")
+    mock.fire("PLAYER_ENTERING_WORLD", false, false)
+    mock.flushTimers()
+    eq(#tick(), 0, "cleared")
+end)
+
+test("only the most recent objects are remembered", function()
+    resetMemory()
+    for i = 1, 12 do
+        showHerb("nameplate40", "은엽수", 100 + i)
+        tick()
+        mock.removePlate("nameplate40")
+    end
+    eq(ns.Memory:EntryCount(), 8, "capped")
+    mock.player.facing = math.pi
+    eq(#tick(0.5), 3, "at most three edge sparkles")
+end)
+
+test("debug report includes memory", function()
     SlashCmdList.TWINKLE("debug")
     local found = false
     for _, line in ipairs(mock.printed) do
-        if line:find("radar:", 1, true) then found = true end
+        if line:find("memory:", 1, true) then found = true end
     end
-    assert(found, "radar line printed")
+    assert(found, "memory line printed")
 end)
 
 -- run ----------------------------------------------------------------------------
