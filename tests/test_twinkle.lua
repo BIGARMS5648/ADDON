@@ -63,10 +63,10 @@ test("loads and applies CVars on login", function()
     local db = TwinkleDB
     assert(db and db.enabled, "db created")
     eq(mock.cvars.SoftTargetInteract, "3", "SoftTargetInteract")
-    eq(mock.cvars.SoftTargetNameplateInteract, "1", "SoftTargetNameplateInteract")
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "interact nameplate closed while nothing is targeted")
     eq(tonumber(mock.cvars.SoftTargetInteractRange), 20, "range")
     eq(mock.cvars.SoftTargetInteractArc, "2", "arc")
-    eq(mock.cvars.SoftTargetIconGameObject, "0", "no object icons")
+    eq(mock.cvars.SoftTargetIconGameObject, "1", "object icons stay on: objects need them for a nameplate")
     eq(mock.cvars.SoftTargetIconInteract, "0", "no NPC icons")
     eq(mock.cvars.interactKeyWarningTutorial, "1", "no 'interact key not bound' warning")
     eq(mock.cvars.softTargetInteractionTutorialTotalInteractions, "2", "no interact help tips")
@@ -466,12 +466,48 @@ test("values the player chose are kept", function()
     eq(saved.blizzIcon, true, "already migrated: untouched")
 end)
 
-test("game interact icons can be turned back on", function()
+test("NPC interact icons can be turned back on", function()
     mock.settings.TWINKLE_blizzIcon.set(true)
     eq(mock.cvars.SoftTargetIconGameObject, "1", "object icons")
     eq(mock.cvars.SoftTargetIconInteract, "1", "NPC icons back to the player's own value")
     mock.settings.TWINKLE_blizzIcon.set(false)
     eq(mock.cvars.SoftTargetIconInteract, "0", "hidden again")
+    eq(mock.cvars.SoftTargetIconGameObject, "1", "object icons never turned off")
+end)
+
+-- interact nameplate gate and combat ----------------------------------------------
+
+test("the interact nameplate opens only for objects that sparkle", function()
+    mock.setSoftInteract({ name = "Copper Vein", guid = guid(1731, 50), gameObject = true, cursor = 131025 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "1", "open for ore")
+    mock.setSoftInteract({ name = "Innkeeper", guid = "Creature-0-1-0-12-6740-01", gameObject = false, cursor = 131019 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "closed for an NPC")
+    mock.setSoftInteract({ name = "Mailbox", guid = guid(999010), gameObject = true, cursor = 131024 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "closed for objects that don't sparkle")
+    mock.setSoftInteract({ name = "은엽수", guid = guid(1617, 51), gameObject = true, cursor = 131018 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "1", "open for a herb")
+    mock.setSoftInteract(nil)
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "closed with no target")
+    mock.flushTimers()
+end)
+
+test("combat hands interact targeting back to the player", function()
+    local printed = #mock.printed
+    mock.setSoftInteract({ name = "은엽수", guid = guid(1617, 52), gameObject = true, cursor = 131018 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "1", "open before the fight")
+    mock.fire("PLAYER_REGEN_DISABLED") -- fires just before lockdown
+    mock.inCombat = true
+    eq(mock.cvars.SoftTargetInteract, "1", "player's own value during combat")
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "no interact nameplates in combat")
+    mock.setSoftInteract({ name = "Copper Vein", guid = guid(1731, 53), gameObject = true, cursor = 131025 })
+    eq(mock.cvars.SoftTargetNameplateInteract, "0", "left alone in combat")
+    mock.inCombat = false
+    mock.fire("PLAYER_REGEN_ENABLED")
+    eq(mock.cvars.SoftTargetInteract, "3", "back on after combat")
+    eq(mock.cvars.SoftTargetNameplateInteract, "1", "nameplate for the ore in front")
+    eq(#mock.printed, printed, "no chat messages for the automatic switch")
+    mock.setSoftInteract(nil)
+    mock.flushTimers()
 end)
 
 -- keep sparkling after turning away -------------------------------------------------

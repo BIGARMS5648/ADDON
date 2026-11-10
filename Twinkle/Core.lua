@@ -81,6 +81,13 @@ local gatherSpellNames = {} -- [localized spell name] = category
 ns.unknownCursors = {}
 local needApply = false
 local probe
+-- Interact nameplate "gate": the game only shows the soft-target nameplate
+-- while the target is an object we sparkle, so NPCs and corpses don't get
+-- nameplates popping up.
+local gateOpen = false
+-- During combat interact targeting goes back to the player's own setting, so
+-- friendly spells cast without a target can't land on a nearby player.
+local combatSuspended = false
 
 local function Print(...)
     print("|cffffd100Twinkle|r:", ...)
@@ -168,17 +175,18 @@ local function DesiredCVars()
     if not db.enabled then
         return want
     end
-    if db.softEnabled then
+    if db.softEnabled and not combatSuspended then
         want.SoftTargetInteract = "3" -- always (not only with a gamepad)
-        want.SoftTargetNameplateInteract = "1"
         want.SoftTargetInteractRange = tostring(db.range)
         want.SoftTargetInteractArc = tostring(db.arc)
-        if db.blizzIcon then
-            want.SoftTargetIconGameObject = "1"
-        else
-            -- keep the look of interact targeting being off: no icons over NPCs or objects
-            want.SoftTargetIconGameObject = "0"
-            want.SoftTargetIconInteract = "0"
+        -- Required: without it the client gives world objects no nameplate
+        -- to hang the sparkle on.
+        want.SoftTargetIconGameObject = "1"
+        if gateOpen then
+            want.SoftTargetNameplateInteract = "1"
+        end
+        if not db.blizzIcon then
+            want.SoftTargetIconInteract = "0" -- no interact icons over NPCs and chairs
         end
     end
     if db.questStyle == "sparkle" then
@@ -232,7 +240,8 @@ local function SuppressInteractTutorials()
     end
 end
 
-function ns:ApplyCVars()
+-- silent: don't announce a delay (used for the automatic combat switch)
+function ns:ApplyCVars(silent)
     if not db then
         return
     end
@@ -250,7 +259,7 @@ function ns:ApplyCVars()
     end
     -- Some of these are "secure" CVars that addons can't change in combat.
     if InCombatLockdown() then
-        if not needApply then
+        if not needApply and not silent then
             Print(L.COMBAT_DEFERRED)
         end
         needApply = true
@@ -526,6 +535,7 @@ function ns:QueueRefresh(delay)
 end
 
 function ns:OnSettingsChanged()
+    self:UpdateGate()
     self:ApplyCVars()
     self:RefreshAll()
     if self.Memory then
@@ -579,6 +589,7 @@ function ns:ADDON_LOADED(name)
     Register("PLAYER_LOGIN")
     Register("PLAYER_ENTERING_WORLD")
     Register("VARIABLES_LOADED")
+    Register("PLAYER_REGEN_DISABLED")
     Register("PLAYER_REGEN_ENABLED")
     Register("NAME_PLATE_UNIT_ADDED")
     Register("NAME_PLATE_UNIT_REMOVED")
@@ -625,10 +636,38 @@ function ns:PLAYER_ENTERING_WORLD()
     self:QueueRefresh(0.5)
 end
 
-function ns:PLAYER_REGEN_ENABLED()
-    if needApply then
-        self:ApplyCVars()
+-- Opens the interact nameplate only while the soft target is an object we
+-- sparkle. Left alone in combat (interact targeting is off then anyway).
+function ns:UpdateGate()
+    if not db or InCombatLockdown() then
+        return
     end
+    local open = false
+    if SoftEnabled() and not combatSuspended and IsGameObject("softinteract") then
+        local category = self:Classify("softinteract")
+        open = db.show[category] and true or false
+    end
+    if open ~= gateOpen then
+        gateOpen = open
+        self:ApplyCVars(true)
+    end
+end
+
+function ns:IsGateOpen()
+    return gateOpen
+end
+
+-- Fires just before combat lockdown starts, so the secure CVars can still change.
+function ns:PLAYER_REGEN_DISABLED()
+    combatSuspended = true
+    gateOpen = false
+    self:ApplyCVars(true)
+end
+
+function ns:PLAYER_REGEN_ENABLED()
+    combatSuspended = false
+    self:ApplyCVars(true)
+    self:UpdateGate()
 end
 
 function ns:NAME_PLATE_UNIT_ADDED(unit)
@@ -645,6 +684,7 @@ function ns:NAME_PLATE_UNIT_REMOVED(unit)
 end
 
 function ns:PLAYER_SOFT_INTERACT_CHANGED()
+    self:UpdateGate()
     -- The new target's nameplate usually arrives right after this event,
     -- so wait a moment before deciding a screen alert is needed.
     self:QueueRefresh(0.15)
