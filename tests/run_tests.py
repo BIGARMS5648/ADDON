@@ -52,8 +52,10 @@ def run(locale):
     # command globals, and reading an undefined global (a typo) is an error.
     lua.execute(
         """
-        local allowed = { TwinkleDB = true, SLASH_TWINKLE1 = true, SLASH_TWINKLE2 = true, SLASH_TWINKLE3 = true }
-        local optional = { GetSpellInfo = true, TwinkleDB = true }
+        local allowed = { TwinkleDB = true, SLASH_TWINKLE1 = true, SLASH_TWINKLE2 = true, SLASH_TWINKLE3 = true,
+            Twinkle_OnAddonCompartmentClick = true, Twinkle_OnAddonCompartmentEnter = true,
+            Twinkle_OnAddonCompartmentLeave = true }
+        local optional = { GetSpellInfo = true, TwinkleDB = true, GetMinimapShape = true }
         setmetatable(_G, {
             __newindex = function(t, k, v)
                 if not allowed[k] then error("addon created global '" .. tostring(k) .. "'", 2) end

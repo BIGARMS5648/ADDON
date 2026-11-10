@@ -33,9 +33,12 @@ local DEFAULTS = {
     sound = false,
     blizzIcon = true,
     questNameMatch = true,
+    radar = true, -- markers for herbs / ore behind or beside you
+    minimap = { hide = false, angle = 225 },
     debug = false,
     watch = {}, -- [lowercase name] = name as typed
     learned = {}, -- [object name] = "HERB" | "ORE"
+    nodes = {}, -- [object ID] = { category =, name = } seen in game, used by the radar
     savedCVars = {}, -- original values of CVars we changed
 }
 ns.DEFAULTS = DEFAULTS
@@ -315,9 +318,18 @@ end
 
 -- Returns category, info (info is for /tw debug).
 function ns:Classify(unit)
+    local category, info = self:ClassifyUncached(unit)
+    if info.source ~= "quest objective" then
+        self:RememberNode(info.id, category, info.name)
+    end
+    return category, info
+end
+
+function ns:ClassifyUncached(unit)
     local name = Safe(UnitName(unit))
     local guid = Safe(UnitGUID(unit))
-    local info = { name = name, guid = guid }
+    local _, id = ParseGUID(guid)
+    local info = { name = name, guid = guid, id = id }
 
     if name and db.watch[name:lower()] then
         info.source = "watch"
@@ -331,8 +343,6 @@ function ns:Classify(unit)
         return cursorCategory, info
     end
 
-    local _, id = ParseGUID(guid)
-    info.id = id
     if id and Data.NODE_IDS[id] then
         info.source = "id"
         return Data.NODE_IDS[id], info
@@ -483,6 +493,12 @@ end
 function ns:OnSettingsChanged()
     self:ApplyCVars()
     self:RefreshAll()
+    if self.Radar then
+        self.Radar:Refresh()
+    end
+    if self.MinimapButton then
+        self.MinimapButton:Update()
+    end
 end
 
 function ns:SetEnabled(enabled)
@@ -552,6 +568,9 @@ function ns:PLAYER_LOGIN()
     self:ApplyCVars()
     if self.CreateOptions then
         self:CreateOptions()
+    end
+    if self.MinimapButton then
+        self.MinimapButton:Update()
     end
     if not db.welcomed then
         db.welcomed = true
@@ -657,6 +676,9 @@ function ns:DebugReport()
     end
     Print(("  sparkles on nameplates: %d, screen alert: %s"):format(count, tostring(Sparkle.IsHudShown())))
     Print("  " .. cvars())
+    if self.Radar then
+        self.Radar:DebugReport()
+    end
     local unknown = {}
     for key, name in pairs(ns.unknownCursors) do
         unknown[#unknown + 1] = key .. " (" .. name .. ")"

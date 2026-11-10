@@ -91,11 +91,12 @@ function ns:CreateOptions()
         Settings.CreateCheckbox(category, setting)
     end
     Slider("range", L.RANGE, L.RANGE_TT, 5, 45, 1, "%d")
-    Dropdown("arc", Settings.VarType.Number, L.ARC, nil, {
+    Dropdown("arc", Settings.VarType.Number, L.ARC, L.ARC_TT, {
         { 0, L.ARC_0 },
         { 1, L.ARC_1 },
         { 2, L.ARC_2 },
     })
+    Checkbox("radar", L.RADAR, L.RADAR_TT)
     Slider("size", L.SIZE, nil, 32, 160, 4, "%d")
     Slider("offsetY", L.OFFSET, nil, -100, 100, 2, "%d")
     Checkbox("showLabel", L.SHOW_LABEL)
@@ -103,6 +104,14 @@ function ns:CreateOptions()
     Checkbox("sound", L.SOUND)
     Checkbox("blizzIcon", L.BLIZZ_ICON)
     Checkbox("questNameMatch", L.QUEST_NAME_MATCH, L.QUEST_NAME_MATCH_TT)
+
+    local minimapSetting = Proxy("minimap", Settings.VarType.Boolean, L.MINIMAP_SHOW, true,
+        function() return not db.minimap.hide end,
+        function(value)
+            db.minimap.hide = not value
+            Changed()
+        end)
+    Settings.CreateCheckbox(category, minimapSetting)
 
     Button(L.TEST, L.TEST_BUTTON, function() ns:ShowTest() end)
     Button(L.RESTORE, L.RESTORE_BUTTON, function()
@@ -115,6 +124,10 @@ function ns:CreateOptions()
 end
 
 function ns:OpenOptions()
+    if InCombatLockdown() then
+        self.Print(L.OPTIONS_IN_COMBAT)
+        return
+    end
     if self.settingsCategory then
         Settings.OpenToCategory(self.settingsCategory:GetID())
     end
@@ -184,6 +197,11 @@ function ns:HandleSlash(msg)
         self.Print(L.DISABLED)
     elseif command == "test" or command == "테스트" then
         self:ShowTest()
+    elseif command == "minimap" or command == "미니맵" then
+        self.MinimapButton:Toggle()
+        if Settings.NotifyUpdate and self.settingsCategory then
+            Settings.NotifyUpdate(VAR_PREFIX .. "minimap")
+        end
     elseif command == "watch" or command == "관심" then
         HandleWatch(args)
     elseif command == "learned" or command == "학습" then

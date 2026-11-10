@@ -117,6 +117,24 @@ function Region:GetFrameLevel() return self.frameLevel end
 function Region:SetIgnoreParentAlpha(v) self.ignoreParentAlpha = v end
 function Region:SetScript(name, fn) self.scripts[name] = fn end
 function Region:GetScript(name) return self.scripts[name] end
+function Region:HookScript(name, fn)
+    local old = self.scripts[name]
+    self.scripts[name] = function(...)
+        if old then old(...) end
+        fn(...)
+    end
+end
+function Region:GetWidth() return self.width end
+function Region:GetHeight() return self.height end
+function Region:GetCenter() return self.centerX or 0, self.centerY or 0 end
+function Region:GetEffectiveScale() return 1 end
+function Region:SetFrameStrata(s) self.strata = s end
+function Region:RegisterForClicks(...) self.clicks = { ... } end
+function Region:RegisterForDrag(...) self.drag = { ... } end
+function Region:SetHighlightTexture(t) self.highlight = t end
+function Region:LockHighlight() self.highlightLocked = true end
+function Region:UnlockHighlight() self.highlightLocked = false end
+function Region:SetDesaturated(v) self.desaturated = v end
 
 -- textures
 function Region:SetTexture(t)
@@ -162,6 +180,23 @@ function CreateFrame(kind, name, parent)
 end
 
 UIParent = CreateFrame("Frame")
+UIParent.width, UIParent.height = 1366, 768
+
+Minimap = CreateFrame("Frame", "Minimap", UIParent)
+Minimap.width, Minimap.height = 140, 140
+Minimap.centerX, Minimap.centerY = 1250, 650
+
+mock.cursor = { 0, 0 }
+function GetCursorPosition() return mock.cursor[1], mock.cursor[2] end
+
+GameTooltip = CreateFrame("Frame")
+GameTooltip.lines = {}
+function GameTooltip:SetOwner(owner) self.owner = owner; self.lines = {}; self.shown = false end
+function GameTooltip:SetText(t) self.lines = { t } end
+function GameTooltip:AddLine(t) self.lines[#self.lines + 1] = t end
+function GameTooltip:IsOwned(f) return self.owner == f and self.shown end
+function GameTooltip:Show() self.shown = true end
+function GameTooltip:Hide() self.shown = false; self.owner = nil end
 
 function mock.fire(event, ...)
     for frame in pairs(mock.events[event] or {}) do
@@ -220,6 +255,27 @@ end
 function mock.setSoftInteract(data)
     mock.units.softinteract = data
     mock.fire("PLAYER_SOFT_INTERACT_CHANGED", nil, data and data.guid or nil)
+end
+
+-- World positions ------------------------------------------------------------
+-- world x points north, y points west; facing is radians counterclockwise from north
+mock.player = { x = 0, y = 0, facing = 0 }
+mock.objects = {} -- [objectID] = { x =, y = } (closest node of that kind)
+mock.swapObjectXY = false
+mock.secretPositions = false
+
+function UnitPosition(u)
+    if u ~= "player" then return nil end
+    return mock.player.x, mock.player.y, 0, 0
+end
+function GetPlayerFacing() return mock.player.facing end
+function ClosestGameObjectPosition(id)
+    local o = mock.objects[id]
+    if not o then return end
+    if mock.secretPositions then return SECRET, SECRET, SECRET end
+    local dist = math.sqrt((o.x - mock.player.x) ^ 2 + (o.y - mock.player.y) ^ 2)
+    if mock.swapObjectXY then return o.y, o.x, dist end
+    return o.x, o.y, dist
 end
 
 -- Spells / quests ------------------------------------------------------------

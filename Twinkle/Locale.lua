@@ -36,9 +36,13 @@ L.SHOW_CATEGORY = "Sparkle: %s"
 L.RANGE = "Detection range"
 L.RANGE_TT = "How far away an object can be picked up (yards)."
 L.ARC = "Detection direction"
+L.ARC_TT = "The game only picks objects you can see on screen. Objects behind you are shown by the direction markers below."
 L.ARC_0 = "Straight ahead"
 L.ARC_1 = "In front"
-L.ARC_2 = "All around"
+L.ARC_2 = "Anywhere on screen"
+L.RADAR = "Show herbs and ore behind or beside you"
+L.RADAR_TT = "Herbs and ore within the detection range that are not in front of you sparkle at the edge of the screen in their direction (behind you = below your character)."
+L.DISTANCE = "%d yd"
 L.SIZE = "Sparkle size"
 L.OFFSET = "Vertical position"
 L.SHOW_LABEL = "Show category label"
@@ -53,6 +57,13 @@ L.TEST_BUTTON = "Show"
 L.RESTORE = "Game settings"
 L.RESTORE_BUTTON = "Restore"
 L.RESTORE_TT = "Disable the addon and put back every game setting it changed."
+L.MINIMAP_SHOW = "Show minimap button"
+L.MINIMAP_LEFT = "|cffffd100Left-click|r: options"
+L.MINIMAP_RIGHT = "|cffffd100Right-click|r: turn on / off"
+L.MINIMAP_MIDDLE = "|cffffd100Middle-click|r: preview"
+L.MINIMAP_DRAG = "|cffffd100Drag|r: move this button"
+L.STATUS_ON = "|cff33ff33On|r"
+L.STATUS_OFF = "|cffff5555Off|r"
 
 -- chat
 L.ENABLED = "Enabled."
@@ -67,11 +78,15 @@ L.LEARNED_LIST = "Learned gathering nodes:"
 L.LEARNED_CLEARED = "Learned nodes cleared."
 L.DEBUG_ON = "Debug messages on."
 L.DEBUG_OFF = "Debug messages off."
+L.MINIMAP_HIDDEN = "Minimap button hidden. Type |cffffd100/tw minimap|r to show it again."
+L.MINIMAP_SHOWN = "Minimap button shown."
+L.OPTIONS_IN_COMBAT = "The options window can't be opened in combat."
 L.NO_SOFT_TARGET = "No interact target right now. Face an object and try again."
 L.HELP = {
     "|cffffd100/tw|r - open options",
     "|cffffd100/tw on|r, |cffffd100/tw off|r - enable / disable (off restores game settings)",
     "|cffffd100/tw test|r - preview the sparkle",
+    "|cffffd100/tw minimap|r - show / hide the minimap button",
     "|cffffd100/tw watch add <name>|r - always sparkle objects with this name (with sound)",
     "|cffffd100/tw watch del <name>|r, |cffffd100/tw watch list|r",
     "|cffffd100/tw learned|r, |cffffd100/tw learned clear|r - nodes learned from gathering",
@@ -109,9 +124,13 @@ if GetLocale() == "koKR" then
     L.RANGE = "탐지 거리"
     L.RANGE_TT = "얼마나 멀리 있는 오브젝트까지 찾을지 (미터)."
     L.ARC = "탐지 방향"
+    L.ARC_TT = "게임은 화면에 보이는 오브젝트만 대상으로 고릅니다. 뒤쪽에 있는 오브젝트는 아래의 방향 표시로 알려 줍니다."
     L.ARC_0 = "정면만"
     L.ARC_1 = "앞쪽"
-    L.ARC_2 = "주변 전체"
+    L.ARC_2 = "화면에 보이는 곳 전체"
+    L.RADAR = "뒤쪽·옆쪽 약초/광맥도 반짝이기"
+    L.RADAR_TT = "탐지 거리 안에 있지만 앞에 있지 않은 약초와 광맥을, 화면 가장자리의 그 방향에 반짝이로 표시합니다 (뒤에 있으면 캐릭터 아래쪽)."
+    L.DISTANCE = "%d미터"
     L.SIZE = "반짝이 크기"
     L.OFFSET = "세로 위치"
     L.SHOW_LABEL = "종류 이름 표시"
@@ -126,6 +145,13 @@ if GetLocale() == "koKR" then
     L.RESTORE = "게임 설정"
     L.RESTORE_BUTTON = "원래대로"
     L.RESTORE_TT = "애드온을 끄고, 애드온이 바꾼 게임 설정을 모두 원래 값으로 되돌립니다."
+    L.MINIMAP_SHOW = "미니맵 버튼 표시"
+    L.MINIMAP_LEFT = "|cffffd100좌클릭|r: 설정 열기"
+    L.MINIMAP_RIGHT = "|cffffd100우클릭|r: 켜기 / 끄기"
+    L.MINIMAP_MIDDLE = "|cffffd100휠 클릭|r: 미리보기"
+    L.MINIMAP_DRAG = "|cffffd100드래그|r: 버튼 위치 옮기기"
+    L.STATUS_ON = "|cff33ff33켜짐|r"
+    L.STATUS_OFF = "|cffff5555꺼짐|r"
 
     L.ENABLED = "켜짐."
     L.DISABLED = "꺼짐. 게임 설정을 원래대로 되돌렸습니다."
@@ -139,11 +165,15 @@ if GetLocale() == "koKR" then
     L.LEARNED_CLEARED = "배운 오브젝트 목록을 지웠습니다."
     L.DEBUG_ON = "디버그 메시지 켜짐."
     L.DEBUG_OFF = "디버그 메시지 꺼짐."
+    L.MINIMAP_HIDDEN = "미니맵 버튼을 숨겼습니다. 다시 보려면 |cffffd100/tw minimap|r"
+    L.MINIMAP_SHOWN = "미니맵 버튼을 표시합니다."
+    L.OPTIONS_IN_COMBAT = "전투 중에는 설정 창을 열 수 없습니다."
     L.NO_SOFT_TARGET = "지금은 상호작용 대상이 없습니다. 오브젝트를 바라보고 다시 시도하세요."
     L.HELP = {
         "|cffffd100/tw|r - 설정 열기",
         "|cffffd100/tw on|r, |cffffd100/tw off|r - 켜기 / 끄기 (끄면 게임 설정 복원)",
         "|cffffd100/tw test|r - 반짝이 미리보기",
+        "|cffffd100/tw minimap|r - 미니맵 버튼 보이기 / 숨기기",
         "|cffffd100/tw watch add <이름>|r - 이 이름의 오브젝트는 항상 반짝이 + 소리",
         "|cffffd100/tw watch del <이름>|r, |cffffd100/tw watch list|r",
         "|cffffd100/tw learned|r, |cffffd100/tw learned clear|r - 채집하며 배운 오브젝트",

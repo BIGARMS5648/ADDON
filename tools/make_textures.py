@@ -74,13 +74,60 @@ def ring(size=128):
     return np.clip(a, 0.0, 1.0)
 
 
-def write_tga(path, alpha):
-    """Write a white 32-bit uncompressed TGA (bottom-left origin)."""
+def icon(size=64):
+    """Colored addon icon: a gold star with green (herb) and blue (ore) glints.
+
+    Returns an (h, w, 4) float RGBA image, straight (not premultiplied) alpha.
+    """
+    x, y = grid(size)
+
+    def layer(alpha, color):
+        return np.clip(alpha, 0.0, 1.0), np.array(color, dtype=np.float64)
+
+    # Bold shapes: the icon is drawn at about 17x17 pixels on the minimap.
+    def spark_at(cx, cy, scale, width=0.2):
+        sx, sy = (x - cx) / scale, (y - cy) / scale
+        main = np.maximum(ray(sx, sy, width, 0.95), ray(sy, sx, width, 0.95))
+        core = np.exp(-((sx * sx + sy * sy) / 0.3 ** 2))
+        return np.clip(1.25 * np.maximum(main, core), 0.0, 1.0)
+
+    r = np.sqrt(x * x + y * y)
+    halo = 0.7 * np.exp(-(r / 0.5) ** 2 * 1.4) * np.clip((1.0 - r) / 0.1, 0.0, 1.0)
+    big = spark_at(-0.1, -0.08, 0.9)
+    layers = [
+        layer(halo, (1.0, 0.7, 0.1)),
+        layer(big, (1.0, 0.82, 0.2)),
+        layer(spark_at(-0.1, -0.08, 0.32), (1.0, 1.0, 0.8)),  # white-hot center
+        layer(spark_at(0.56, 0.56, 0.42, 0.24), (0.4, 1.0, 0.4)),
+        layer(spark_at(0.6, -0.6, 0.34, 0.24), (0.5, 0.82, 1.0)),
+    ]
+    out_rgb = np.zeros((size, size, 3))
+    out_a = np.zeros((size, size))
+    for a, color in layers:  # "over" compositing
+        new_a = a + out_a * (1 - a)
+        safe = np.where(new_a > 0, new_a, 1)
+        out_rgb = (color * a[..., None] + out_rgb * (out_a * (1 - a))[..., None]) / safe[..., None]
+        out_a = new_a
+    return np.dstack([out_rgb, out_a])
+
+
+def write_tga(path, image):
+    """Write a 32-bit uncompressed TGA (bottom-left origin).
+
+    `image` is either an alpha mask (white texture) or an RGBA float image.
+    """
+    if image.ndim == 2:
+        rgb = np.ones(image.shape + (3,))
+        alpha = image
+    else:
+        rgb, alpha = image[..., :3], image[..., 3]
     h, w = alpha.shape
-    a = (np.clip(alpha, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
     rgba = np.zeros((h, w, 4), dtype=np.uint8)
-    rgba[..., 0:3] = 255  # B, G, R
-    rgba[..., 3] = a
+    to8 = lambda v: (np.clip(v, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+    rgba[..., 0] = to8(rgb[..., 2])  # B
+    rgba[..., 1] = to8(rgb[..., 1])  # G
+    rgba[..., 2] = to8(rgb[..., 0])  # R
+    rgba[..., 3] = to8(alpha)
     header = struct.pack(
         "<BBBHHBHHHHBB",
         0,  # id length
@@ -102,6 +149,7 @@ TEXTURES = {
     "star.tga": star,
     "spark.tga": spark,
     "ring.tga": ring,
+    "icon.tga": icon,
 }
 
 
@@ -146,7 +194,7 @@ def render_preview(path):
     from PIL import Image
 
     rng = np.random.default_rng(7)
-    tex = {name: fn() for name, fn in TEXTURES.items()}
+    tex = {name: fn() for name, fn in TEXTURES.items() if name != "icon.tga"}
     size = 96
     W, H = 3 * 170, 190
     frames = []
