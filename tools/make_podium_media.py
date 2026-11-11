@@ -141,14 +141,17 @@ def shadow(w=128, h=64):
 
 
 def beam(size=256):
-    """Stage spotlight: a cone from the top middle of the texture down to the
-    bottom middle, so it can be rotated about the texture's center."""
+    """Stage spotlight: a round lamp a little below the top middle of the
+    texture (LAMP_AT of its height), and a cone from it down to the bottom
+    middle, so the texture can be rotated about its center."""
     x, y = grid(size)
-    t = (1 - y) / 2  # 0 at the top (lamp) .. 1 at the bottom
-    half = 0.03 + 0.28 * t
+    t = (1 - y) / 2  # 0 at the top .. 1 at the bottom
+    lamp_at = 0.06
+    half = 0.015 + 0.28 * np.clip(t - lamp_at, 0, None)
     cone = np.exp(-(x / half) ** 2 * 2.2)
-    along = np.clip(t / 0.04, 0, 1) * np.clip((1 - t) / 0.25, 0, 1) * (1 - 0.55 * t)
-    lamp = 0.9 * np.exp(-((x / 0.06) ** 2 + ((t - 0.02) / 0.04) ** 2))
+    along = np.clip((t - lamp_at) / 0.1, 0, 1) * np.clip((1 - t) / 0.25, 0, 1) * (1 - 0.55 * t)
+    d = np.sqrt((x / 0.07) ** 2 + ((t - lamp_at) / 0.035) ** 2)
+    lamp = np.exp(-d * d * 1.5)
     return np.clip(cone * along + lamp, 0, 1)
 
 

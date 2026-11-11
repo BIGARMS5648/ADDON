@@ -434,6 +434,7 @@ end
 --------------------------------------------------------------------------
 
 local SPOT_SIZE = 640
+local LAMP_AT = 0.06 -- where the lamp is in the beam texture, from its top
 local CONFETTI_COUNT = 44
 local CONFETTI_COLORS = {
     { 1, 0.82, 0.25 }, { 1, 1, 1 }, { 1, 0.45, 0.2 }, { 0.45, 0.8, 1 }, { 1, 0.5, 0.78 }, { 0.55, 1, 0.5 },
@@ -445,8 +446,9 @@ local function AimSpot(spot, angle)
     local s, c = math.sin(angle), math.cos(angle)
     spot:SetRotation(angle)
     spot:ClearAllPoints()
-    -- the beam runs from the texture's top middle through its center
-    spot:SetPoint("CENTER", frame, "TOP", spot.lampX + SPOT_SIZE / 2 * s, spot.lampY - SPOT_SIZE / 2 * c)
+    -- the beam runs from the lamp (near the texture's top middle) through its center
+    local reach = SPOT_SIZE * (0.5 - LAMP_AT)
+    spot:SetPoint("CENTER", frame, "TOP", spot.lampX + reach * s, spot.lampY - reach * c)
 end
 
 local function CreateConfetti(parent)
@@ -819,13 +821,14 @@ function Ceremony:Create()
     frame.rays:SetPoint("CENTER", frame, "TOP", 0, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].height / 2))
     frame.rays:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
 
-    -- Two stage lights from the sides, aimed at the MVP.
+    -- Two stage lights from the top corners, shining down at the MVP.
     frame.spots = {}
     for i, side in ipairs({ -1, 1 }) do
         local spot = Tex(frame, "ARTWORK", 1, "beam", SPOT_SIZE)
         spot:SetVertexColor(1, 0.92, 0.7)
         spot:SetAlpha(0)
-        spot.lampX, spot.lampY = side * (WIDTH / 2 - 40), -(STAGE_TOP + 10) -- side lights, below the header
+        -- in the top corners, far enough in that the lamp's glow stays inside the window
+        spot.lampX, spot.lampY = side * (WIDTH / 2 - 36), -36
         frame.spots[i] = spot
     end
 
