@@ -358,7 +358,8 @@ end
 
 -- Puts the player's character (loaded now or kept from earlier) on the step.
 local function BorrowCharacter(slot, p)
-    local entry = ns.Models:Get(p)
+    -- (made-up players of the preview are played by your own character)
+    local entry = p.standIn and ns.Models:StandIn() or ns.Models:Get(p)
     if not entry then
         return false
     end

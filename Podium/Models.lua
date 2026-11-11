@@ -220,6 +220,35 @@ function Models:Get(p)
     return entry
 end
 
+-- Your own character again, for the made-up players of the preview
+-- (/mvp test): one more model frame each, so they can all emote at once.
+local standIns = {}
+function Models:StandIn()
+    if not Enabled() then
+        return nil
+    end
+    local entry
+    for _, e in ipairs(standIns) do
+        if not e.inUse then
+            entry = e
+            break
+        end
+    end
+    if not entry then
+        entry = { model = NewModel(), standIn = true }
+        standIns[#standIns + 1] = entry
+    end
+    local model = entry.model
+    model:Show()
+    local ok, success = pcall(model.SetUnit, model, "player")
+    if not ok or success == false then
+        model:Hide()
+        return nil
+    end
+    entry.loaded, entry.time, entry.unit = true, GetTime(), "player"
+    return entry
+end
+
 -- Forgets every kept character (option turned off, tests).
 function Models:Forget()
     for guid, entry in pairs(cache) do

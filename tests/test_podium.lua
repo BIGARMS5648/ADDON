@@ -729,26 +729,50 @@ test("preview: reveal, skip and contents", function()
     assert(f.width <= 900 and f.height <= 700, "window fits a 768-high screen")
 end)
 
-test("preview when alone: stand-ins for the made-up party", function()
+test("preview when alone: your own character plays all five", function()
     reset()
     solo()
     ns:ShowDemo()
     ns.Ceremony:Skip()
-    local shownModels, icons = 0, 0
+    local models, emotes = {}, {}
     for _, slot in ipairs(frame().slots) do
-        if slot.player then
-            if slot.model then
-                shownModels = shownModels + 1
-                eq(slot.model.unit, "player", "only your character")
-                eq(slot.icon.shown, false, "no icon")
-            else
-                icons = icons + 1
-                eq(slot.icon.shown, true, "class icon")
-            end
+        assert(slot.player, "five on the podium")
+        assert(slot.model, slot.player.name .. " has a character")
+        eq(slot.model.unit, "player", "your character")
+        eq(slot.model.shown, true, "shown")
+        eq(slot.icon.shown, false, "no icon")
+        assert(not models[slot.model], "a model frame each")
+        models[slot.model] = true
+        emotes[slot.model.animation] = true
+    end
+    eq(frame().slots[1].model.animation, ANIM.FLEX, "MVP flexes")
+    assert(emotes[ANIM.CHICKEN] and emotes[ANIM.APPLAUD], "each part does its own emote")
+    eq(report().players[1].name, "나", "your real name for the MVP")
+    -- again: the same frames are reused, not new ones
+    ns.Ceremony:Hide()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    for _, slot in ipairs(frame().slots) do
+        assert(models[slot.model], "reused")
+    end
+end)
+
+test("preview with a party: real members, your character fills the rest", function()
+    reset()
+    mock.units.party3, mock.units.party4 = nil, nil -- a party of three
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local mine, theirs = 0, 0
+    for _, slot in ipairs(frame().slots) do
+        if slot.model.unit == "player" then
+            mine = mine + 1
+        else
+            theirs = theirs + 1
         end
     end
-    eq(shownModels, 1, "one character")
-    eq(icons, 4, "four icons")
+    eq(theirs, 2, "two party members")
+    eq(mine, 3, "you and two stand-ins")
+    eq(slotFor(PARTY[2].name).model.unit, "party1", "party member as themselves")
 end)
 
 test("each player's own character emotes for their result", function()

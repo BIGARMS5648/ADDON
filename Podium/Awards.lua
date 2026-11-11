@@ -90,6 +90,7 @@ local function Aggregate(run, keys)
                         class = info.class,
                         role = info.role,
                         isLocal = info.isLocal,
+                        standIn = info.standIn,
                         time = 0,
                     }
                     for _, stat in ipairs(STAT_KEYS) do
@@ -550,6 +551,10 @@ function Awards.DemoRun()
     for _, member in ipairs(waiting) do
         Take(member, false)
     end
+    -- Parts nobody from the group took are played by your own character.
+    for _, part in ipairs(free) do
+        part.standIn = true
+    end
     local plan = {
         { L.DEMO_TRASH, 31 }, { L.DEMO_TRASH, 26 }, { L.DEMO_BOSS1, 64, boss = true },
         { L.DEMO_TRASH, 42 }, { L.DEMO_TRASH, 23 }, { L.DEMO_BOSS2, 88, boss = true, star = "demo-me" },
@@ -566,7 +571,10 @@ function Awards.DemoRun()
         fights = {}, order = {}, roster = {}, bosses = {}, killed = {},
     }
     for _, member in ipairs(cast) do
-        run.roster[member.key] = { name = member.name, class = member.class, role = member.role, isLocal = member.isLocal }
+        run.roster[member.key] = {
+            name = member.name, class = member.class, role = member.role, isLocal = member.isLocal,
+            standIn = member.standIn, -- made up: shown with your own character
+        }
     end
     local parts = { "demo-tank", "demo-heal", "demo-rogue", "demo-hunter", "demo-me" }
     for i, member in ipairs(cast) do
