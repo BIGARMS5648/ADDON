@@ -617,6 +617,12 @@ function ns:ADDON_LOADED(name)
         db.history = {}
     end
     db.everyBoss = nil -- removed option (1.2)
+    if (db.dbVersion or 1) < 2 then
+        -- 1.2.2 builds the old "-40" into the character placement: that is 0 now.
+        local offset = db.modelOffset or 0
+        db.modelOffset = offset == 0 and 0 or math.max(-40, math.min(40, offset + 40))
+    end
+    db.dbVersion = 2
     ns.db = db
 
     Register("PLAYER_LOGIN")

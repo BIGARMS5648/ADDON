@@ -184,7 +184,7 @@ end
 -- boot ----------------------------------------------------------------------------
 
 test("loads with defaults, options and slash commands", function()
-    PodiumDB = { everyBoss = true } -- saved by 1.0
+    PodiumDB = { everyBoss = true, modelOffset = -40 } -- saved by 1.0 / 1.2.1
     mock.fire("ADDON_LOADED", "Podium")
     mock.fire("PLAYER_LOGIN")
     mock.fire("PLAYER_ENTERING_WORLD", true, false)
@@ -195,6 +195,8 @@ test("loads with defaults, options and slash commands", function()
     assert(mock.settings.PODIUM_scale and mock.settings.PODIUM_onLeave, "settings registered")
     eq(mock.settings.PODIUM_everyBoss, nil, "per-boss ceremony option removed")
     eq(PodiumDB.everyBoss, nil, "old saved setting dropped")
+    eq(PodiumDB.modelOffset, 0, "1.2.1's -40 is the new 0")
+    eq(PodiumDB.dbVersion, 2, "settings version")
     eq(mock.settings.PODIUM_autoClose.options.formatter(0), L.NEVER, "slider label")
     assert(SlashCmdList.PODIUM and SLASH_PODIUM1 == "/mvp", "slash")
     assert(printed(L.LOADED), "welcome message")
@@ -916,36 +918,40 @@ test("characters aren't kept in combat or in big raids", function()
     end
 end)
 
-test("characters stand on their step, bigger, adjustable", function()
+test("characters stand on their step; the MVP is bigger; adjustable", function()
     reset()
     ns:ShowDemo()
     ns.Ceremony:Skip()
-    local STEPS, FILL = ns.Ceremony.STEPS, ns.Ceremony.MODEL_FILL
+    local STEPS, FILL, MARGIN = ns.Ceremony.STEPS, ns.Ceremony.MODEL_FILL, ns.Ceremony.FEET_MARGIN
     for _, slot in ipairs(frame().slots) do
         local model = slot.model
-        if model then
-            local point = model.points[1]
-            eq(point[1], "BOTTOM", "anchored at the bottom")
-            local feet = point[5] + model.height * (1 - FILL) / 2
-            assert(math.abs(feet - STEPS[slot.rank].step) < 0.01, "feet on the step top")
-            assert(point[5] < STEPS[slot.rank].step, "frame sunk into the step")
-            assert(math.abs(model.height * FILL - STEPS[slot.rank].height) < 0.01, "full size")
-        end
+        local point = model.points[1]
+        eq(point[1], "BOTTOM", "anchored at the bottom")
+        local feet = point[5] + model.height * MARGIN
+        assert(math.abs(feet - STEPS[slot.rank].step) < 0.01, "feet on the step top")
+        assert(math.abs(model.height * FILL - STEPS[slot.rank].height) < 0.01, "full size")
     end
-    assert(STEPS[1].height >= 250 and STEPS[2].height >= 220, "bigger than 1.1 (205 / 180 frame)")
+    -- the old placement with "-40" is the new 0 (side steps, 100%)
+    local side = frame().slots[2].model
+    local old = STEPS[2].step - side.height * (1 - FILL) / 2 - 40
+    assert(math.abs(side.points[1][5] - old) < 1, "same as 1.2.1 at -40")
+    -- only the MVP got bigger
+    local mvp, second = frame().slots[1].geometry, frame().slots[2].geometry
+    assert(mvp.visible > second.visible * 1.35, "MVP clearly bigger")
+    eq(STEPS[2].height, 232, "others unchanged")
+    assert(mvp.feet + mvp.visible <= 500 - 92 - 6, "MVP stays below the header")
     ns.Ceremony:Hide()
     PodiumDB.modelSize, PodiumDB.modelOffset = 120, 10
     ns:ShowDemo()
     ns.Ceremony:Skip()
-    local side = frame().slots[2].model
+    side = frame().slots[2].model
     assert(math.abs(side.height * FILL - STEPS[2].height * 1.2) < 0.01, "120%")
-    local feet = side.points[1][5] + side.height * (1 - FILL) / 2
+    local feet = side.points[1][5] + side.height * MARGIN
     assert(math.abs(feet - (STEPS[2].step + 10)) < 0.01, "moved up 10")
-    local mvp = frame().slots[1]
-    local top = mvp.geometry.feet + mvp.geometry.height
-    assert(top <= 500 - 92 - 6, "MVP stays below the header")
+    mvp = frame().slots[1].geometry
+    assert(mvp.feet + mvp.visible <= 500 - 92 - 6 + 0.01, "MVP still below the header at 120%")
     assert(mock.settings.PODIUM_modelSize and mock.settings.PODIUM_modelOffset, "settings")
-    eq(mock.settings.PODIUM_modelOffset.options.formatter(-6), "-6", "label")
+    eq(mock.settings.PODIUM_modelOffset.default, 0, "default 0")
 end)
 
 test("characters can be turned off", function()

@@ -40,7 +40,7 @@ local POTG_W, POTG_H, POTG_TOP = 848, 104, 512
 -- Podium steps by rank: width, step height, how tall the character stands
 -- (at 100% size), step color.
 local STEPS = {
-    { w = 200, step = 106, height = 255, color = { 0.85, 0.62, 0.14 } }, -- gold
+    { w = 200, step = 106, height = 340, color = { 0.85, 0.62, 0.14 } }, -- gold (the MVP stands out)
     { w = 150, step = 64, height = 232, color = { 0.62, 0.66, 0.74 } }, -- silver
     { w = 150, step = 54, height = 232, color = { 0.66, 0.4, 0.18 } }, -- bronze
     { w = 150, step = 44, height = 226, color = { 0.24, 0.24, 0.3 } },
@@ -55,6 +55,10 @@ local STEPS = {
 -- in game, the "character height" option moves them.
 local CAMERA_DISTANCE = 1.35
 local MODEL_FILL = 0.67
+-- Measured in game (1.2.1 looked right with the characters moved down 40):
+-- the empty space under the feet is about this share of the frame's height,
+-- more than MODEL_FILL suggests. The frame is sunk into the step by that much.
+local FEET_MARGIN = 0.28
 -- Left to right: 4th, 2nd, MVP, 3rd, 5th.
 local STAGE_ORDER = { 4, 2, 1, 3, 5 }
 
@@ -78,7 +82,7 @@ local EMOTES = {
     NONE = { ANIM.APPLAUD },
 }
 Ceremony.ANIM, Ceremony.EMOTES = ANIM, EMOTES
-Ceremony.STEPS, Ceremony.MODEL_FILL = STEPS, MODEL_FILL
+Ceremony.STEPS, Ceremony.MODEL_FILL, Ceremony.FEET_MARGIN = STEPS, MODEL_FILL, FEET_MARGIN
 
 local ROLE_ATLAS = {
     TANK = "UI-LFG-RoleIcon-Tank",
@@ -291,17 +295,23 @@ local function Geometry(slot)
     local step = STEPS[slot.rank]
     local db = ns.db or {}
     local size = (db.modelSize or 100) / 100
-    -- the MVP must stay below the header
-    local room = (STAGE_BOTTOM - STAGE_TOP) - step.step - (slot.rank == 1 and 6 or 40)
-    local height = min(step.height * size, room)
+    local height = step.height * size
     local frameHeight = height / MODEL_FILL
-    local sink = frameHeight * (1 - MODEL_FILL) / 2
+    -- how tall the character really looks (the same space above as below)
+    local visible = frameHeight * (1 - 2 * FEET_MARGIN)
+    -- the head must stay below the header
+    local room = (STAGE_BOTTOM - STAGE_TOP) - step.step - (slot.rank == 1 and 6 or 40)
+    if visible > room then
+        local shrink = room / visible
+        height, frameHeight, visible = height * shrink, frameHeight * shrink, room
+    end
     return {
         feet = step.step, -- from the bottom of the slot
         height = height,
+        visible = visible,
         frameHeight = frameHeight,
         frameWidth = max(step.w + 40, frameHeight * 0.75),
-        bottom = step.step - sink + (db.modelOffset or 0),
+        bottom = step.step - frameHeight * FEET_MARGIN + (db.modelOffset or 0),
     }
 end
 Ceremony.Geometry = Geometry
@@ -311,7 +321,7 @@ local function PlaceRegions(slot)
     slot.geometry = g
     slot.beam:SetSize(STEPS[slot.rank].w * 1.15, g.height * 1.25)
     slot.ring:ClearAllPoints()
-    slot.ring:SetPoint("CENTER", slot, "BOTTOM", 0, g.feet + g.height * 0.45)
+    slot.ring:SetPoint("CENTER", slot, "BOTTOM", 0, g.feet + g.visible * 0.55)
     if slot.badge and slot.rank ~= 1 then
         -- above the head, high enough for raised arms
         slot.extra:ClearAllPoints()
@@ -895,7 +905,7 @@ local function FillStage(report)
         end
     end
     frame.rays:ClearAllPoints()
-    frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - frame.slots[1].geometry.height / 2))
+    frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - frame.slots[1].geometry.visible / 2))
     local hidden = #report.players - #used
     frame.more:SetText(hidden > 0 and L.MORE_PLAYERS:format(hidden) or "")
     -- reveal from the outside in, MVP last
