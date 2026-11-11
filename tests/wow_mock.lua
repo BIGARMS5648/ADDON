@@ -329,4 +329,273 @@ end
 
 SlashCmdList = {}
 
+--------------------------------------------------------------------------------
+-- More widget API (Podium's ceremony window). Layout data is kept so
+-- tools/render_podium_preview.py can draw the window.
+--------------------------------------------------------------------------------
+
+function Region:CreateTexture(name, layer, template, sublevel)
+    local t = newRegion("Texture", self)
+    t.layer, t.sublevel = layer or "ARTWORK", sublevel or 0
+    self.regions = self.regions or {}
+    self.regions[#self.regions + 1] = t
+    return t
+end
+function Region:CreateFontString(name, layer)
+    local fs = newRegion("FontString", self)
+    fs.layer, fs.sublevel = layer or "ARTWORK", 0
+    self.regions = self.regions or {}
+    self.regions[#self.regions + 1] = fs
+    return fs
+end
+local baseSetTexture = Region.SetTexture
+function Region:SetTexture(t)
+    baseSetTexture(self, t)
+    self.atlas, self.colorTexture = nil, nil
+end
+function Region:SetWidth(w)
+    assert(type(w) == "number" and w >= 0, "bad width")
+    self.width = w
+end
+function Region:SetHeight(h)
+    assert(type(h) == "number" and h >= 0, "bad height")
+    self.height = h
+end
+function Region:SetAllPoints(rel)
+    rel = rel or self.parent
+    self.points = { { "TOPLEFT", rel, "TOPLEFT" }, { "BOTTOMRIGHT", rel, "BOTTOMRIGHT" } }
+end
+function Region:SetScale(s)
+    assert(type(s) == "number" and s > 0, "bad scale")
+    self.scale = s
+end
+function Region:GetScale() return self.scale or 1 end
+function Region:SetShown(v) self.shown = v and true or false end
+function Region:SetToplevel() end
+function Region:SetClampedToScreen() end
+function Region:SetMovable() end
+function Region:EnableMouse(v) self.mouseEnabled = v end
+function Region:StartMoving() end
+function Region:StopMovingOrSizing() end
+function Region:IsMouseOver() return self.mouseOver or false end
+function Region:SetFont(path, size, flags)
+    assert(type(path) == "string", "font path")
+    assert(type(size) == "number" and size > 0, "font size")
+    assert(type(flags) == "string", "font flags must be a string")
+    self.font = { path = path, size = size, flags = flags }
+end
+function Region:SetJustifyH(j) self.justifyH = j end
+function Region:SetJustifyV(j) self.justifyV = j end
+function Region:SetShadowOffset() end
+function Region:SetShadowColor() end
+function Region:SetWordWrap(v) self.wordWrap = v end
+function Region:SetMaxLines(n) self.maxLines = n end
+function Region:GetText() return self.text end
+function Region:SetColorTexture(r, g, b, a)
+    self.colorTexture = { r, g, b, a or 1 }
+    self.texture, self.atlas = nil, nil
+end
+function Region:SetGradient(orientation, minColor, maxColor)
+    assert(type(minColor) == "table" and type(maxColor) == "table", "SetGradient takes color objects")
+    self.gradient = { orientation, minColor, maxColor }
+end
+function Region:SetAtlas(name)
+    assert(type(name) == "string")
+    self.atlas = name
+    self.texture, self.colorTexture = nil, nil
+end
+function Region:SetTexCoord(...) self.texCoord = { ... } end
+
+local baseCreateFrame = CreateFrame
+function CreateFrame(kind, name, parent, template)
+    local f = baseCreateFrame(kind, name, parent)
+    f.name, f.template = name, template
+    if parent then
+        parent.children = parent.children or {}
+        parent.children[#parent.children + 1] = f
+        f.frameLevel = (parent.frameLevel or 1) + 1
+    end
+    return f
+end
+
+function GameTooltip:AddDoubleLine(left, right) self.lines[#self.lines + 1] = tostring(left) .. " = " .. tostring(right) end
+
+--------------------------------------------------------------------------------
+-- Game state for Podium
+--------------------------------------------------------------------------------
+
+mock.now = 1762800000
+function time() return mock.now end
+date = os.date
+STANDARD_TEXT_FONT = "Fonts\\2002.TTF"
+UISpecialFrames = {}
+LE_PARTY_CATEGORY_INSTANCE = 2
+function CreateColor(r, g, b, a) return { r = r, g = g, b = b, a = a } end
+
+RAID_CLASS_COLORS = {
+    WARRIOR = { r = 0.78, g = 0.61, b = 0.43 }, PRIEST = { r = 1, g = 1, b = 1 },
+    ROGUE = { r = 1, g = 0.96, b = 0.41 }, HUNTER = { r = 0.67, g = 0.83, b = 0.45 },
+    MAGE = { r = 0.25, g = 0.78, b = 0.92 }, PALADIN = { r = 0.96, g = 0.55, b = 0.73 },
+    DRUID = { r = 1, g = 0.49, b = 0.04 }, WARLOCK = { r = 0.53, g = 0.53, b = 0.93 },
+    SHAMAN = { r = 0, g = 0.44, b = 0.87 },
+}
+CLASS_ICON_TCOORDS = { WARRIOR = { 0, 0.25, 0, 0.25 } }
+C_Texture = {
+    GetAtlasInfo = function(name)
+        if name:find("^classicon%-") or name:find("^UI%-LFG%-RoleIcon") then
+            return { width = 64, height = 64 }
+        end
+    end,
+}
+
+mock.spellNames[133] = "화염구"
+mock.spellNames[1752] = "사악한 일격"
+mock.spellNames[2061] = "순간 치유"
+C_Spell.GetSpellTexture = function(id) return 130000 + id end
+
+function UnitAffectingCombat(u) return u == "player" and mock.inCombat or false end
+mock.dead = false
+function UnitIsDeadOrGhost(u) return u == "player" and mock.dead or false end
+function UnitExists(u) return mock.units[u] ~= nil end
+function UnitClass(u)
+    local d = mock.units[u]
+    if d and d.class then return d.class, d.class end
+end
+function UnitGroupRolesAssigned(u)
+    local d = mock.units[u]
+    return d and d.role or "NONE"
+end
+mock.raid = false
+mock.instanceGroup = false
+function IsInRaid() return mock.raid end
+function IsInGroup(category)
+    if category == LE_PARTY_CATEGORY_INSTANCE then return mock.instanceGroup end
+    return mock.units.party1 ~= nil or mock.raid
+end
+
+mock.chat = {}
+C_ChatInfo = {
+    SendChatMessage = function(msg, channel)
+        assert(type(msg) == "string" and #msg <= 255, "chat message too long")
+        assert(not msg:find("|", 1, true), "escape codes in chat message")
+        mock.chat[#mock.chat + 1] = { msg = msg, channel = channel }
+    end,
+}
+
+-- Instances ------------------------------------------------------------------
+mock.instance = nil -- { name =, type = "party" | "raid", mapID =, difficulty = }
+function IsInInstance()
+    if mock.instance then return true, mock.instance.type end
+    return false, "none"
+end
+function GetInstanceInfo()
+    local i = mock.instance
+    if not i then return "Elwynn Forest", "none", 0, "", 0, 0, false, 0 end
+    return i.name, i.type, i.difficultyID or 1, i.difficulty or "", 5, 0, false, i.mapID
+end
+
+mock.journal = {} -- [instance map ID] = { journalID =, bosses = { { name =, id = } } }
+C_EncounterJournal = {
+    GetInstanceForGameMap = function(mapID)
+        local j = mock.journal[mapID]
+        return j and j.journalID or nil
+    end,
+}
+function EJ_GetInstanceForMap() return nil end
+function EJ_GetEncounterInfoByIndex(index, journalID)
+    for _, j in pairs(mock.journal) do
+        if j.journalID == journalID and j.bosses[index] then
+            local b = j.bosses[index]
+            return b.name, "", 1000 + index, 0, "", journalID, b.id, 0
+        end
+    end
+end
+C_Map = { GetBestMapForUnit = function() return nil end }
+
+-- Damage meter ---------------------------------------------------------------
+-- session = { id =, name =, duration =, sources = { { guid =, name =, class =,
+--   isLocal =, dmg =, heal =, taken =, avoid =, ints =, disp =, deaths =,
+--   spells = { dmg = { { id, amount } }, heal = ... } } } }
+mock.meter = { sessions = {}, secret = false, available = true, reason = "", reads = 0 }
+Enum = Enum or {}
+Enum.DamageMeterType = {
+    DamageDone = 0, Dps = 1, HealingDone = 2, Hps = 3, Absorbs = 4, Interrupts = 5, Dispels = 6,
+    DamageTaken = 7, AvoidableDamageTaken = 8, Deaths = 9, EnemyDamageTaken = 10,
+}
+local FIELD = { [0] = "dmg", [2] = "heal", [5] = "ints", [6] = "disp", [7] = "taken", [8] = "avoid", [9] = "deaths" }
+
+local function findSession(id)
+    for _, s in ipairs(mock.meter.sessions) do
+        if s.id == id then return s end
+    end
+end
+
+local function hidden()
+    return mock.meter.secret or mock.inCombat -- SecretWhenInCombat
+end
+
+C_DamageMeter = {
+    IsDamageMeterAvailable = function() return mock.meter.available, mock.meter.reason end,
+    GetAvailableCombatSessions = function()
+        local list = {}
+        for _, s in ipairs(mock.meter.sessions) do
+            list[#list + 1] = { sessionID = s.id, name = s.name or "", durationSeconds = s.duration }
+        end
+        return list
+    end,
+    GetCombatSessionFromID = function(id, meterType)
+        mock.meter.reads = mock.meter.reads + 1
+        local field = assert(FIELD[meterType], "unexpected meter type " .. tostring(meterType))
+        local s = findSession(id)
+        local session = { combatSources = {}, maxAmount = 0, totalAmount = 0, durationSeconds = s and s.duration }
+        if not s then return session end
+        local total = 0
+        for _, src in ipairs(s.sources) do
+            local function entry(amount)
+                local e = {
+                    sourceGUID = src.guid, name = src.name, classFilename = src.class or "",
+                    isLocalPlayer = src.isLocal or false, totalAmount = amount, specIconID = SECRET,
+                    amountPerSecond = amount / math.max(1, s.duration or 1), deathRecapID = 0,
+                    sourceCreatureID = src.creature,
+                }
+                if hidden() then
+                    e.totalAmount, e.amountPerSecond = SECRET, SECRET
+                end
+                session.combatSources[#session.combatSources + 1] = e
+                return e
+            end
+            if field == "deaths" then
+                for n = 1, src.deaths or 0 do
+                    entry(0).deathRecapID = n
+                end
+            elseif (src[field] or 0) > 0 then
+                entry(src[field])
+                total = total + src[field]
+            end
+        end
+        session.totalAmount = hidden() and SECRET or total
+        return session
+    end,
+    GetCombatSessionSourceFromID = function(id, meterType, guid)
+        local field = FIELD[meterType]
+        local s = findSession(id)
+        local result = { combatSpells = {}, maxAmount = 0, totalAmount = 0 }
+        for _, src in ipairs(s and s.sources or {}) do
+            if src.guid == guid then
+                result.totalAmount = src[field] or 0
+                for _, spell in ipairs(src.spells and src.spells[field] or {}) do
+                    result.combatSpells[#result.combatSpells + 1] = { spellID = spell[1], totalAmount = spell[2] }
+                end
+            end
+        end
+        return result
+    end,
+    ResetAllCombatSessions = function() mock.meter.sessions = {} end,
+}
+
+function mock.addSession(s)
+    mock.meter.sessions[#mock.meter.sessions + 1] = s
+    return s
+end
+
 return mock

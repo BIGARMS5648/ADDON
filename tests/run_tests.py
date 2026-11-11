@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Load the addon into a Lua 5.1 runtime with a mocked WoW API and run tests.
+"""Load each addon into a Lua 5.1 runtime with a mocked WoW API and run tests.
 
 Requires the `lupa` package (pip install lupa).
-    python3 tests/run_tests.py
+    python3 tests/run_tests.py            # every addon
+    python3 tests/run_tests.py Podium     # one addon
 """
 
 import os
@@ -12,9 +13,25 @@ import sys
 from lupa import lua51
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ADDON = "Twinkle"
-ADDON_DIR = os.path.join(ROOT, ADDON)
 TESTS = os.path.join(ROOT, "tests")
+
+# Per addon: test file, globals it may create, globals it may read while unset.
+ADDONS = {
+    "Twinkle": dict(
+        test="test_twinkle.lua",
+        allowed=["TwinkleDB", "SLASH_TWINKLE1", "SLASH_TWINKLE2", "SLASH_TWINKLE3",
+                 "Twinkle_OnAddonCompartmentClick", "Twinkle_OnAddonCompartmentEnter",
+                 "Twinkle_OnAddonCompartmentLeave"],
+        optional=["GetSpellInfo", "TwinkleDB", "GetMinimapShape"],
+    ),
+    "Podium": dict(
+        test="test_podium.lua",
+        allowed=["PodiumDB", "SLASH_PODIUM1", "SLASH_PODIUM2", "SLASH_PODIUM3",
+                 "Podium_OnAddonCompartmentClick", "Podium_OnAddonCompartmentEnter",
+                 "Podium_OnAddonCompartmentLeave", "PodiumCeremonyFrame"],
+        optional=["GetSpellInfo", "PodiumDB", "C_ClassColor", "GetClassAtlas"],
+    ),
+}
 
 
 def read(path):
@@ -22,17 +39,19 @@ def read(path):
         return f.read()
 
 
-def toc_files():
+def toc_files(addon):
     files = []
-    for line in read(os.path.join(ADDON_DIR, ADDON + ".toc")).splitlines():
+    for line in read(os.path.join(ROOT, addon, addon + ".toc")).splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
             files.append(line)
     return files
 
 
-def run(locale):
-    print(f"[{locale}]")
+def load(addon, locale):
+    """Returns (lua runtime, run_chunk, mock) with the addon loaded."""
+    spec = ADDONS[addon]
+    addon_dir = os.path.join(ROOT, addon)
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     run_chunk = lua.eval(
         """
@@ -50,12 +69,13 @@ def run(locale):
 
     # Strict globals: the addon may only create its saved variable and slash
     # command globals, and reading an undefined global (a typo) is an error.
+    to_set = lua.eval("function(names) local t = {} for _, n in ipairs(names) do t[n] = true end return t end")
+    lua.globals().ALLOWED = to_set(lua.table_from(spec["allowed"]))
+    lua.globals().OPTIONAL = to_set(lua.table_from(spec["optional"]))
     lua.execute(
         """
-        local allowed = { TwinkleDB = true, SLASH_TWINKLE1 = true, SLASH_TWINKLE2 = true, SLASH_TWINKLE3 = true,
-            Twinkle_OnAddonCompartmentClick = true, Twinkle_OnAddonCompartmentEnter = true,
-            Twinkle_OnAddonCompartmentLeave = true }
-        local optional = { GetSpellInfo = true, TwinkleDB = true, GetMinimapShape = true }
+        local allowed, optional = ALLOWED, OPTIONAL
+        ALLOWED, OPTIONAL = nil, nil
         setmetatable(_G, {
             __newindex = function(t, k, v)
                 if not allowed[k] then error("addon created global '" .. tostring(k) .. "'", 2) end
@@ -69,29 +89,46 @@ def run(locale):
         """
     )
 
-    files = toc_files()
+    files = toc_files(addon)
     for name in files:
-        path = os.path.join(ADDON_DIR, name)
+        path = os.path.join(addon_dir, name)
         if not os.path.exists(path):
-            print(f"TOC lists a missing file: {name}")
-            return 1
-        run_chunk(read(path), f"{ADDON}/{name}", ADDON, ns)
+            raise FileNotFoundError(f"TOC lists a missing file: {name}")
+        run_chunk(read(path), f"{addon}/{name}", addon, ns)
+    return lua, run_chunk, mock
 
-    # Every texture the code references must ship with the addon.
-    code = "\n".join(read(os.path.join(ADDON_DIR, n)) for n in files)
-    for tex in set(re.findall(r'CreateTex\(fx, "(\w+)"', code)):
-        if not os.path.exists(os.path.join(ADDON_DIR, "Media", tex + ".tga")):
-            print(f"missing texture Media/{tex}.tga")
-            return 1
 
-    failed = run_chunk(read(os.path.join(TESTS, "test_twinkle.lua")), "tests/test_twinkle.lua")
+def check_media(addon):
+    """Every texture the code references must ship with the addon."""
+    addon_dir = os.path.join(ROOT, addon)
+    code = "\n".join(read(os.path.join(addon_dir, n)) for n in toc_files(addon))
+    names = set(re.findall(r'CreateTex\(fx, "(\w+)"', code))  # Twinkle
+    names |= set(re.findall(r'Tex\(\w+(?:\.\w+)*, "\w+", -?\d+, "(\w+)"', code))  # Podium
+    names |= set(re.findall(r'Media\\\\(\w+)', code))
+    missing = [n for n in sorted(names) if not os.path.exists(os.path.join(addon_dir, "Media", n + ".tga"))]
+    for n in missing:
+        print(f"missing texture {addon}/Media/{n}.tga")
+    return not missing
+
+
+def run(addon, locale):
+    print(f"[{addon} {locale}]")
+    if not check_media(addon):
+        return 1
+    lua, run_chunk, _ = load(addon, locale)
+    test = ADDONS[addon]["test"]
+    failed = run_chunk(read(os.path.join(TESTS, test)), f"tests/{test}")
     return 1 if failed else 0
 
 
 def main():
+    only = sys.argv[1:]
     status = 0
-    for locale in ("koKR", "enUS"):
-        status |= run(locale)
+    for addon in ADDONS:
+        if only and addon not in only:
+            continue
+        for locale in ("koKR", "enUS"):
+            status |= run(addon, locale)
     return status
 
 
