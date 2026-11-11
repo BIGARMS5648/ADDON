@@ -103,8 +103,16 @@ end
 
 function Region:SetParent(p) self.parent = p end
 function Region:GetParent() return self.parent end
-function Region:Show() self.shown = true end
-function Region:Hide() self.shown = false end
+function Region:Show()
+    local was = self.shown
+    self.shown = true
+    if not was and self.scripts.OnShow then self.scripts.OnShow(self) end
+end
+function Region:Hide()
+    local was = self.shown
+    self.shown = false
+    if was and self.scripts.OnHide then self.scripts.OnHide(self) end
+end
 function Region:IsShown() return self.shown end
 function Region:ClearAllPoints() self.points = {} end
 function Region:SetPoint(...) self.points[#self.points + 1] = { ... } end
@@ -419,6 +427,44 @@ function CreateFrame(kind, name, parent, template)
 end
 
 function GameTooltip:AddDoubleLine(left, right) self.lines[#self.lines + 1] = tostring(left) .. " = " .. tostring(right) end
+
+-- Character models (DressUpModel / PlayerModel)
+mock.hidden = {} -- [unit] = true: too far away to show
+mock.noModel = {} -- [unit] = true: SetUnit fails
+function UnitIsVisible(u) return mock.units[u] ~= nil and not mock.hidden[u] end
+local function isModel(r) return r.kind == "DressUpModel" or r.kind == "PlayerModel" end
+function Region:SetUnit(unit)
+    assert(isModel(self), "SetUnit on a " .. tostring(self.kind))
+    if not mock.units[unit] or mock.noModel[unit] then
+        self.unit = nil
+        return false
+    end
+    self.unit = unit
+    return true
+end
+function Region:SetAnimation(anim)
+    assert(isModel(self) and type(anim) == "number", "SetAnimation")
+    self.animation = anim
+    self.animations = self.animations or {}
+    self.animations[#self.animations + 1] = anim
+end
+function Region:HasAnimation(anim) return anim ~= 999 end
+function Region:SetFacing(f) self.facing = f end
+function Region:SetPortraitZoom(z) self.zoom = z end
+function Region:SetCamDistanceScale(s) self.camScale = s end
+function Region:SetPosition(x, y, z) self.modelPosition = { x, y, z } end
+function Region:SetSheathed(v) self.sheathed = v end
+function Region:SetModelAlpha(a)
+    assert(a >= -1e-9 and a <= 1 + 1e-9, "bad model alpha")
+    self.modelAlpha = a
+end
+function Region:ClearModel() self.unit, self.animation = nil, nil end
+function Region:HasScript(name)
+    if isModel(self) then
+        return name == "OnAnimFinished" or name == "OnModelLoaded" or name == "OnUpdate" or name == "OnShow"
+    end
+    return true
+end
 
 --------------------------------------------------------------------------------
 -- Game state for Podium

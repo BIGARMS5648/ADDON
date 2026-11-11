@@ -5,11 +5,18 @@ local L = ns.L
 -- The ceremony window
 --
 --   header:  DUNGEON CLEAR / title / dungeon, time, bosses, deaths
---   row 1:   [Play of the Game]   [   MVP   ]   [impact scoreboard]
---   row 2:   award cards (top damage, top healer, iron wall, ...)
+--   stage:   the party's own characters on a podium, MVP in the middle on
+--            the highest step, each playing an emote that fits their result
+--            (MVP flexes, award winners cheer / roar / bow / salute, the
+--            rest applaud, the joke-award winners cry or do the chicken)
+--   bottom:  Play of the Game card
+--
+-- Characters are the players' real 3D models (DressUpModel:SetUnit), so
+-- they need to be in the group and nearby; anyone who isn't (or a ceremony
+-- from the history) gets their class icon on the step instead.
 --
 -- Revealed in order like an end-of-match screen: title, play of the game,
--- MVP (with light rays), scoreboard, then the awards one by one. Click to
+-- the lineup from the outside in, then the MVP with light rays. Click to
 -- skip, drag to move, Esc to close.
 --------------------------------------------------------------------------
 
@@ -20,14 +27,45 @@ local MEDIA = "Interface\\AddOns\\" .. ADDON .. "\\Media\\"
 local CLASS_ICONS = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
 local QUESTION_MARK = "Interface\\Icons\\INV_Misc_QuestionMark"
 
-local WIDTH, HEIGHT = 800, 540
+local WIDTH, HEIGHT = 880, 600
 local GOLD = { 1, 0.82, 0.25 }
 local ORANGE = { 1, 0.55, 0.15 }
-local SIDE_CARD_W, SIDE_CARD_H = 230, 236
-local MVP_W, MVP_H = 270, 268
-local SIDE_MARGIN = 20
-local AWARD_H = 100
-local MAX_ROWS = 8
+local STAGE_TOP, STAGE_BOTTOM = 92, 424 -- from the top of the window
+local SLOT_GAP = 12
+local MAX_SLOTS = 5
+local POTG_W, POTG_H, POTG_TOP = 848, 104, 436
+
+-- Podium steps by rank: width, step height, model height, step color.
+local STEPS = {
+    { w = 200, step = 74, model = 205, color = { 0.85, 0.62, 0.14 } }, -- gold
+    { w = 150, step = 58, model = 180, color = { 0.62, 0.66, 0.74 } }, -- silver
+    { w = 150, step = 48, model = 180, color = { 0.66, 0.4, 0.18 } }, -- bronze
+    { w = 150, step = 40, model = 176, color = { 0.24, 0.24, 0.3 } },
+    { w = 150, step = 40, model = 176, color = { 0.24, 0.24, 0.3 } },
+}
+-- Left to right: 4th, 2nd, MVP, 3rd, 5th.
+local STAGE_ORDER = { 4, 2, 1, 3, 5 }
+
+-- Emote animations (AnimationData IDs).
+local ANIM = {
+    STAND = 0, BOW = 66, WAVE = 67, CHEER = 68, DANCE = 69, ROAR = 74, CRY = 77, CHICKEN = 78,
+    APPLAUD = 80, FLEX = 82, POINT = 84, SALUTE = 113,
+}
+-- What a player does on stage, by their headline title.
+local EMOTES = {
+    MVP = { ANIM.FLEX, ANIM.ROAR },
+    POTG = { ANIM.CHEER, ANIM.DANCE },
+    DAMAGE = { ANIM.ROAR, ANIM.CHEER },
+    HEALING = { ANIM.BOW, ANIM.CHEER },
+    TANK = { ANIM.SALUTE, ANIM.ROAR },
+    INTERRUPTS = { ANIM.POINT, ANIM.CHEER },
+    DISPELS = { ANIM.WAVE, ANIM.CHEER },
+    SURVIVOR = { ANIM.SALUTE, ANIM.CHEER },
+    FLOOR = { ANIM.CHICKEN },
+    DEATHS = { ANIM.CRY },
+    NONE = { ANIM.APPLAUD },
+}
+Ceremony.ANIM, Ceremony.EMOTES = ANIM, EMOTES
 
 local ROLE_ATLAS = {
     TANK = "UI-LFG-RoleIcon-Tank",
@@ -40,11 +78,11 @@ local SOUNDS = {
     title = { "LFG_REWARDS", 17316 },
     potg = { "UI_EPICLOOT_TOAST", 31578 },
     mvp = { "UI_LEGENDARY_LOOT_TOAST", 63971 },
-    award = { "UI_70_ARTIFACT_FORGE_TRAIT_RANKUP", 54129 },
+    lineup = { "UI_70_ARTIFACT_FORGE_TRAIT_RANKUP", 54129 },
 }
 
 local frame
-local elements = {} -- animated parts: { frame =, kind =, start =, dur =, x =, y =, sound = }
+local elements = {} -- animated parts: { frame =, kind =, start =, dur =, x =, y =, sound =, slot = }
 local clock, finishTime, closeIn = 0, 0, nil
 local currentReport
 
@@ -168,42 +206,13 @@ local function Solid(parent, layer, sublevel, r, g, b, a)
     return t
 end
 
--- Dark card with a colored top edge and a thin border.
-local function Card(parent, w, h, accent, alpha)
-    local card = CreateFrame("Frame", nil, parent)
-    card:SetSize(w, h)
-    local bg = Solid(card, "BACKGROUND", -7, 0.06, 0.06, 0.09, alpha or 0.93)
-    bg:SetAllPoints()
-    local shine = Solid(card, "BACKGROUND", -6, 1, 1, 1, 1)
-    shine:SetPoint("TOPLEFT")
-    shine:SetPoint("TOPRIGHT")
-    shine:SetHeight(min(70, h * 0.45))
-    if shine.SetGradient and CreateColor then
-        pcall(shine.SetGradient, shine, "VERTICAL",
-            CreateColor(accent[1], accent[2], accent[3], 0), CreateColor(accent[1], accent[2], accent[3], 0.16))
+local function Gradient(texture, r, g, b, bottomAlpha, topAlpha)
+    if texture.SetGradient and CreateColor then
+        texture:SetColorTexture(1, 1, 1, 1)
+        pcall(texture.SetGradient, texture, "VERTICAL", CreateColor(r, g, b, bottomAlpha), CreateColor(r, g, b, topAlpha))
     else
-        shine:SetColorTexture(accent[1], accent[2], accent[3], 0.08)
+        texture:SetColorTexture(r, g, b, (bottomAlpha + topAlpha) / 2)
     end
-    local top = Solid(card, "BORDER", 0, accent[1], accent[2], accent[3], 0.95)
-    top:SetPoint("TOPLEFT")
-    top:SetPoint("TOPRIGHT")
-    top:SetHeight(2)
-    local edges = {
-        { "BOTTOMLEFT", "BOTTOMRIGHT", nil, 1 },
-        { "TOPLEFT", "BOTTOMLEFT", 1, nil },
-        { "TOPRIGHT", "BOTTOMRIGHT", 1, nil },
-    }
-    for _, e in ipairs(edges) do
-        local line = Solid(card, "BORDER", 0, accent[1], accent[2], accent[3], 0.35)
-        line:SetPoint(e[1])
-        line:SetPoint(e[2])
-        if e[3] then
-            line:SetWidth(e[3])
-        else
-            line:SetHeight(e[4])
-        end
-    end
-    return card
 end
 
 local function EaseOut(p)
@@ -216,95 +225,35 @@ local function EaseOutBack(p)
     return 1 + c3 * (p - 1) ^ 3 + c1 * (p - 1) ^ 2
 end
 
---------------------------------------------------------------------------
--- Building the window
---------------------------------------------------------------------------
-
-local function CreateHeader(parent)
-    local header = CreateFrame("Frame", nil, parent)
-    header:SetSize(WIDTH, 96)
-    header.glow = Tex(header, "BACKGROUND", 0, "glow")
-    header.glow:SetSize(520, 150)
-    header.glow:SetPoint("CENTER", 0, -6)
-    header.glow:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    header.glow:SetAlpha(0.22)
-    header.tag = Text(header, 11, { 0.85, 0.66, 0.3 })
-    header.tag:SetPoint("TOP", 0, -16)
-    header.title = Text(header, 30, GOLD, "OUTLINE")
-    header.title:SetPoint("TOP", 0, -32)
-    header.sub = Text(header, 13, { 0.82, 0.82, 0.82 })
-    header.sub:SetPoint("TOP", 0, -72)
-    header.sub:SetWidth(WIDTH - 60)
-    header.sub:SetWordWrap(false)
-    header.starL = Tex(header, "ARTWORK", 1, "star", 40)
-    header.starL:SetPoint("RIGHT", header.title, "LEFT", -12, 0)
-    header.starL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    header.starR = Tex(header, "ARTWORK", 1, "star", 40)
-    header.starR:SetPoint("LEFT", header.title, "RIGHT", 12, 0)
-    header.starR:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    return header
+local function HideTooltip()
+    if GameTooltip then
+        GameTooltip:Hide()
+    end
 end
 
-local function CreatePotgCard(parent)
-    local card = Card(parent, SIDE_CARD_W, SIDE_CARD_H, ORANGE)
-    card.flash = Tex(card, "BACKGROUND", -5, "glow")
-    card.flash:SetSize(320, 300)
-    card.flash:SetPoint("CENTER")
-    card.flash:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3])
-    card.flash:SetAlpha(0)
-    card.tag = Text(card, 9, { 1, 0.62, 0.3 })
-    card.tag:SetPoint("TOP", 0, -12)
-    card.label = Text(card, 18, { 1, 0.62, 0.22 }, "OUTLINE")
-    card.label:SetPoint("TOP", 0, -26)
-    card.icon = card:CreateTexture(nil, "ARTWORK")
-    card.icon:SetSize(44, 44)
-    card.icon:SetPoint("TOPLEFT", 16, -60)
-    card.name = Text(card, 16, GOLD, "OUTLINE", "LEFT")
-    card.name:SetPoint("TOPLEFT", card.icon, "TOPRIGHT", 10, -3)
-    card.name:SetWidth(SIDE_CARD_W - 86)
-    card.name:SetWordWrap(false)
-    card.role = Text(card, 11, { 0.7, 0.7, 0.7 }, nil, "LEFT")
-    card.role:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -4)
-    card.fight = Text(card, 12, GOLD, nil, "LEFT")
-    card.fight:SetPoint("TOPLEFT", 16, -116)
-    card.fight:SetWidth(SIDE_CARD_W - 32)
-    card.fight:SetWordWrap(false)
-    card.text = Text(card, 13, { 1, 1, 1 }, nil, "LEFT")
-    card.text:SetPoint("TOPLEFT", card.fight, "BOTTOMLEFT", 0, -6)
-    card.text:SetWidth(SIDE_CARD_W - 32)
-    card.text:SetJustifyV("TOP")
-    card.text:SetMaxLines(3)
-    card.detail = Text(card, 11, { 0.75, 0.75, 0.75 }, nil, "LEFT")
-    card.detail:SetPoint("BOTTOMLEFT", 16, 44)
-    card.detail:SetWidth(SIDE_CARD_W - 32)
-    card.detail:SetWordWrap(false)
-    card.spellIcon = card:CreateTexture(nil, "ARTWORK")
-    card.spellIcon:SetSize(22, 22)
-    card.spellIcon:SetPoint("BOTTOMLEFT", 16, 14)
-    card.spell = Text(card, 12, { 0.9, 0.9, 0.9 }, nil, "LEFT")
-    card.spell:SetPoint("LEFT", card.spellIcon, "RIGHT", 8, 0)
-    card.spell:SetWidth(SIDE_CARD_W - 62)
-    card.spell:SetWordWrap(false)
-    card.empty = Text(card, 12, { 0.6, 0.6, 0.6 })
-    card.empty:SetPoint("CENTER", 0, -10)
-    return card
-end
-
-local function ShowStatTooltip(owner, p)
+local function ShowStatTooltip(owner, p, titles)
     if not (GameTooltip and p) then
         return
     end
     local r, g, b = ClassColor(p.class)
     local Num = ns.FormatNumber
+    local function Share(value, share)
+        return L.STAT_SHARE:format(Num(value), math.floor(share * 100 + 0.5))
+    end
     GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
     GameTooltip:SetText(ns.Awards.ShortName(p.name), r, g, b)
     GameTooltip:AddLine(("%s  ·  %s"):format(RoleName(p.role), L.SCORE:format(p.score)), GOLD[1], GOLD[2], GOLD[3])
+    GameTooltip:AddLine(L.SCORE_HINT, 0.6, 0.6, 0.6)
+    for _, title in ipairs(titles or {}) do
+        GameTooltip:AddDoubleLine(title.text, title.value or "", 1, 0.82, 0.25, 1, 1, 1)
+    end
+    GameTooltip:AddLine(" ")
     local lines = {
-        { L.STAT_DAMAGE, L.STAT_SHARE:format(Num(p.dmg), math.floor(p.dmgShare * 100 + 0.5)) },
+        { L.STAT_DAMAGE, Share(p.dmg, p.dmgShare) },
         { L.STAT_DPS, Num(p.dps) },
-        { L.STAT_HEALING, L.STAT_SHARE:format(Num(p.heal), math.floor(p.healShare * 100 + 0.5)) },
+        { L.STAT_HEALING, Share(p.heal, p.healShare) },
         { L.STAT_HPS, Num(p.hps) },
-        { L.STAT_TAKEN, L.STAT_SHARE:format(Num(p.taken), math.floor(p.takenShare * 100 + 0.5)) },
+        { L.STAT_TAKEN, Share(p.taken, p.takenShare) },
         { L.STAT_AVOIDABLE, Num(p.avoid) },
         { L.STAT_INTERRUPTS, L.STAT_COUNT:format(p.ints) },
         { L.STAT_DISPELS, L.STAT_COUNT:format(p.disp) },
@@ -320,129 +269,306 @@ local function ShowStatTooltip(owner, p)
     GameTooltip:Show()
 end
 
-local function HideTooltip()
-    if GameTooltip then
-        GameTooltip:Hide()
+--------------------------------------------------------------------------
+-- Characters
+--------------------------------------------------------------------------
+
+local function Units()
+    local units = { "player" }
+    if IsInRaid() then
+        for i = 1, 40 do
+            units[#units + 1] = "raid" .. i
+        end
+    else
+        for i = 1, 4 do
+            units[#units + 1] = "party" .. i
+        end
+    end
+    return units
+end
+
+-- The unit token of a player in the report, if they're still in the group.
+function Ceremony.FindUnit(p)
+    for _, unit in ipairs(Units()) do
+        if ns.Safe(UnitExists(unit)) then
+            local guid = ns.Safe(UnitGUID(unit))
+            if guid and guid == p.key then
+                return unit
+            end
+            local name, realm = UnitName(unit)
+            name, realm = ns.Safe(name), ns.Safe(realm)
+            if name and (p.name == name or (realm and realm ~= "" and p.name == name .. "-" .. realm)) then
+                return unit
+            end
+        end
+    end
+    if p.isLocal then
+        return "player"
     end
 end
 
-local function CreateMvpCard(parent)
-    local card = Card(parent, MVP_W, MVP_H, GOLD, 0.78)
-    card:EnableMouse(true)
-    card:SetScript("OnEnter", function(self)
-        ShowStatTooltip(self, self.player)
-    end)
-    card:SetScript("OnLeave", HideTooltip)
-    card:SetScript("OnMouseUp", function()
-        Ceremony:Skip()
-    end)
-    card.glow = Tex(card, "BACKGROUND", -5, "glow", 230)
-    card.glow:SetPoint("CENTER", card, "TOP", 0, -98)
-    card.glow:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    card.label = Text(card, 40, GOLD, "OUTLINE")
-    card.label:SetPoint("TOP", 0, -10)
-    card.laurelL = Tex(card, "ARTWORK", 1, "star", 34)
-    card.laurelL:SetPoint("RIGHT", card.label, "LEFT", -6, 0)
-    card.laurelL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    card.laurelR = Tex(card, "ARTWORK", 1, "star", 34)
-    card.laurelR:SetPoint("LEFT", card.label, "RIGHT", 6, 0)
-    card.laurelR:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    card.ring = Tex(card, "ARTWORK", 0, "ring", 96)
-    card.ring:SetPoint("CENTER", card, "TOP", 0, -98)
-    card.ring:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-    card.icon = card:CreateTexture(nil, "ARTWORK", nil, 1)
-    card.icon:SetSize(64, 64)
-    card.icon:SetPoint("CENTER", card, "TOP", 0, -98)
-    card.roleIcon = card:CreateTexture(nil, "OVERLAY")
-    card.roleIcon:SetSize(24, 24)
-    card.roleIcon:SetPoint("CENTER", card.icon, "BOTTOMRIGHT", -2, 2)
-    card.name = Text(card, 22, GOLD, "OUTLINE")
-    card.name:SetPoint("TOP", 0, -142)
-    card.name:SetWidth(MVP_W - 20)
-    card.name:SetWordWrap(false)
-    card.score = Text(card, 16, GOLD)
-    card.score:SetPoint("TOP", 0, -172)
-    card.stat1 = Text(card, 12, { 1, 1, 1 })
-    card.stat1:SetPoint("TOP", 0, -200)
-    card.stat1:SetWidth(MVP_W - 20)
-    card.stat1:SetWordWrap(false)
-    card.stat2 = Text(card, 12, { 0.75, 0.75, 0.75 })
-    card.stat2:SetPoint("TOP", 0, -220)
-    card.stat2:SetWidth(MVP_W - 20)
-    card.stat2:SetWordWrap(false)
-    card.stat3 = Text(card, 11, { 0.6, 0.6, 0.6 })
-    card.stat3:SetPoint("TOP", 0, -240)
-    card.stat3:SetWidth(MVP_W - 20)
-    card.stat3:SetWordWrap(false)
-    return card
+-- Shows the player's own character; false if the game can't (gone, too far).
+local function LoadModel(slot, p)
+    local model = slot.model
+    slot.unit = Ceremony.FindUnit(p)
+    if not slot.unit or (ns.db and ns.db.models == false) then
+        return false
+    end
+    if UnitIsVisible then
+        local ok, visible = pcall(UnitIsVisible, slot.unit)
+        if ok and ns.Safe(visible) == false then
+            return false
+        end
+    end
+    local ok, success = pcall(model.SetUnit, model, slot.unit)
+    if not ok or success == false then
+        return false
+    end
+    pcall(model.SetPortraitZoom, model, 0)
+    pcall(model.SetCamDistanceScale, model, 1.12)
+    pcall(model.SetPosition, model, 0, 0, 0)
+    pcall(model.SetFacing, model, slot.facing or 0)
+    if model.SetSheathed then
+        pcall(model.SetSheathed, model, true) -- empty hands look better while emoting
+    end
+    pcall(model.SetAnimation, model, ANIM.STAND)
+    return true
 end
 
-local function CreateScoreboard(parent)
-    local card = Card(parent, SIDE_CARD_W, SIDE_CARD_H, { 0.45, 0.65, 1 })
-    card.label = Text(card, 14, GOLD, nil, "LEFT")
-    card.label:SetPoint("TOPLEFT", 14, -13)
-    card.hint = Text(card, 10, { 0.6, 0.6, 0.6 }, nil, "RIGHT")
-    card.hint:SetPoint("TOPRIGHT", -12, -16)
-    card.rows = {}
-    for i = 1, MAX_ROWS do
-        local row = CreateFrame("Button", nil, card)
-        row:SetSize(SIDE_CARD_W - 24, 22)
-        row:SetPoint("TOPLEFT", 12, -38 - (i - 1) * 24)
-        row.bar = Solid(row, "BACKGROUND", 0, 1, 1, 1, 0.2)
-        row.bar:SetPoint("TOPLEFT")
-        row.bar:SetPoint("BOTTOMLEFT")
-        row.rank = Text(row, 12, { 0.7, 0.7, 0.7 }, nil, "RIGHT")
-        row.rank:SetPoint("LEFT", 0, 0)
-        row.rank:SetWidth(14)
-        row.role = row:CreateTexture(nil, "ARTWORK")
-        row.role:SetSize(15, 15)
-        row.role:SetPoint("LEFT", 19, 0)
-        row.name = Text(row, 12, GOLD, nil, "LEFT")
-        row.name:SetPoint("LEFT", 38, 0)
-        row.name:SetWidth(SIDE_CARD_W - 24 - 38 - 40)
-        row.name:SetWordWrap(false)
-        row.score = Text(row, 12, { 1, 1, 1 }, nil, "RIGHT")
-        row.score:SetPoint("RIGHT", -6, 0)
-        row:SetScript("OnEnter", function(self)
-            ShowStatTooltip(self, self.player)
+local function PlayEmote(slot)
+    local model = slot.model
+    slot.emoteIndex = slot.emoteIndex % #slot.emotes + 1
+    local anim = slot.emotes[slot.emoteIndex]
+    if model.HasAnimation then
+        local ok, has = pcall(model.HasAnimation, model, anim)
+        if ok and has == false then
+            anim = ANIM.CHEER
+        end
+    end
+    pcall(model.SetAnimation, model, anim)
+    slot.animation = anim
+    slot.playing = true
+    -- Without an "animation finished" event, start over now and then.
+    slot.nextEmote = not slot.hasFinishScript and clock + 5 or nil
+end
+
+-- Emote finished: stand for a moment, then the next one.
+local function OnAnimFinished(model)
+    local slot = model:GetParent()
+    if not slot.playing then
+        return
+    end
+    slot.playing = false
+    pcall(model.SetAnimation, model, ANIM.STAND)
+    slot.animation = ANIM.STAND
+    slot.nextEmote = clock + 1.2 + (slot.position * 0.37) % 1.3
+end
+
+--------------------------------------------------------------------------
+-- Building the window
+--------------------------------------------------------------------------
+
+local function CreateHeader(parent)
+    local header = CreateFrame("Frame", nil, parent)
+    header:SetSize(WIDTH, 92)
+    header.glow = Tex(header, "BACKGROUND", 0, "glow")
+    header.glow:SetSize(520, 150)
+    header.glow:SetPoint("CENTER", 0, -6)
+    header.glow:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+    header.glow:SetAlpha(0.22)
+    header.tag = Text(header, 11, { 0.85, 0.66, 0.3 })
+    header.tag:SetPoint("TOP", 0, -14)
+    header.title = Text(header, 30, GOLD, "OUTLINE")
+    header.title:SetPoint("TOP", 0, -30)
+    header.sub = Text(header, 13, { 0.82, 0.82, 0.82 })
+    header.sub:SetPoint("TOP", 0, -70)
+    header.sub:SetWidth(WIDTH - 60)
+    header.sub:SetWordWrap(false)
+    header.starL = Tex(header, "ARTWORK", 1, "star", 40)
+    header.starL:SetPoint("RIGHT", header.title, "LEFT", -12, 0)
+    header.starL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+    header.starR = Tex(header, "ARTWORK", 1, "star", 40)
+    header.starR:SetPoint("LEFT", header.title, "RIGHT", 12, 0)
+    header.starR:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+    return header
+end
+
+-- One place on the podium: badge, character (or class icon), step with name.
+local function CreateSlot(parent, rank)
+    local step = STEPS[rank]
+    local mvp = rank == 1
+    local slot = CreateFrame("Button", nil, parent)
+    slot:SetSize(step.w, STAGE_BOTTOM - STAGE_TOP)
+    slot.rank = rank
+    slot:SetScript("OnEnter", function(self)
+        ShowStatTooltip(self, self.player, self.titles)
+    end)
+    slot:SetScript("OnLeave", HideTooltip)
+    slot:SetScript("OnClick", function()
+        Ceremony:Skip()
+    end)
+
+    -- light cone from above and a pool of light at the feet
+    slot.beam = Tex(slot, "BACKGROUND", 1, "glow")
+    slot.beam:SetSize(step.w * (mvp and 1.15 or 1), step.model * 1.15)
+    slot.beam:SetPoint("BOTTOM", 0, step.step - 10)
+    slot.beam:SetAlpha(mvp and 0.35 or 0.16)
+    slot.pool = Tex(slot, "BACKGROUND", 2, "glow")
+    slot.pool:SetSize(step.w * 0.95, 30)
+    slot.pool:SetPoint("CENTER", slot, "BOTTOM", 0, step.step + 2)
+
+    -- the step
+    slot.block = Solid(slot, "BORDER", 0, 1, 1, 1, 1)
+    slot.block:SetPoint("BOTTOMLEFT", 6, 0)
+    slot.block:SetPoint("BOTTOMRIGHT", -6, 0)
+    slot.block:SetHeight(step.step)
+    Gradient(slot.block, step.color[1], step.color[2], step.color[3], 0.55, 0.95)
+    slot.blockTop = Solid(slot, "BORDER", 1, min(1, step.color[1] + 0.25), min(1, step.color[2] + 0.25), min(1, step.color[3] + 0.25), 1)
+    slot.blockTop:SetPoint("BOTTOMLEFT", slot.block, "TOPLEFT", 0, -4)
+    slot.blockTop:SetPoint("BOTTOMRIGHT", slot.block, "TOPRIGHT", 0, -4)
+    slot.blockTop:SetHeight(4)
+
+    -- the character
+    slot.model = CreateFrame("DressUpModel", nil, slot)
+    slot.model:SetSize(step.w, step.model)
+    slot.model:SetPoint("BOTTOM", 0, step.step - 4)
+    slot.hasFinishScript = slot.model.HasScript and slot.model:HasScript("OnAnimFinished") or false
+    if slot.hasFinishScript then
+        slot.model:SetScript("OnAnimFinished", OnAnimFinished)
+    end
+    if slot.model.HasScript and slot.model:HasScript("OnModelLoaded") then
+        -- emotes asked for before the model finished loading are lost
+        slot.model:SetScript("OnModelLoaded", function(model)
+            local s = model:GetParent()
+            if s.playing then
+                pcall(model.SetAnimation, model, s.animation)
+            end
         end)
-        row:SetScript("OnLeave", HideTooltip)
-        card.rows[i] = row
     end
-    -- party totals, shown when the rows leave room for them
-    card.totals = {}
-    for i = 1, 3 do
-        local line = Text(card, 11, { 0.72, 0.72, 0.72 }, nil, "LEFT")
-        line:SetPoint("BOTTOMLEFT", 16, 12 + (3 - i) * 17)
-        line:SetWidth(SIDE_CARD_W - 32)
-        line:SetWordWrap(false)
-        card.totals[i] = line
+    -- stand-in when the character can't be shown
+    slot.ring = Tex(slot, "ARTWORK", 0, "ring", mvp and 104 or 84)
+    slot.ring:SetPoint("CENTER", slot.model, "CENTER", 0, -10)
+    slot.icon = slot:CreateTexture(nil, "ARTWORK", nil, 1)
+    slot.icon:SetSize(mvp and 70 or 56, mvp and 70 or 56)
+    slot.icon:SetPoint("CENTER", slot.ring, "CENTER")
+
+    -- name and score on the front of the step
+    slot.name = Text(slot, mvp and 16 or 13, GOLD, "OUTLINE")
+    slot.name:SetPoint("TOP", slot.block, "TOP", 0, mvp and -14 or -7)
+    slot.name:SetWidth(step.w - 18)
+    slot.name:SetWordWrap(false)
+    slot.roleIcon = slot:CreateTexture(nil, "OVERLAY")
+    slot.roleIcon:SetSize(mvp and 16 or 13, mvp and 16 or 13)
+    slot.score = Text(slot, mvp and 13 or 10, { 1, 1, 1 })
+    slot.score:SetPoint("TOP", slot.name, "BOTTOM", 7, mvp and -6 or -3)
+    slot.roleIcon:SetPoint("RIGHT", slot.score, "LEFT", -3, 0)
+
+    -- titles above the head
+    slot.extra = Text(slot, 10, { 0.85, 0.75, 0.5 })
+    slot.extra:SetPoint("BOTTOM", slot.model, "TOP", 0, 2)
+    slot.extra:SetWidth(step.w - 6)
+    slot.extra:SetWordWrap(false)
+    if mvp then
+        slot.badge = Text(slot, 32, GOLD, "OUTLINE")
+        slot.badge:SetPoint("BOTTOM", slot.extra, "TOP", 0, 0)
+        slot.laurelL = Tex(slot, "ARTWORK", 2, "star", 30)
+        slot.laurelL:SetPoint("RIGHT", slot.badge, "LEFT", -4, 0)
+        slot.laurelL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+        slot.laurelR = Tex(slot, "ARTWORK", 2, "star", 30)
+        slot.laurelR:SetPoint("LEFT", slot.badge, "RIGHT", 4, 0)
+        slot.laurelR:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+    else
+        slot.badge = Text(slot, 13, GOLD, "OUTLINE")
+        slot.badge:SetPoint("BOTTOM", slot.extra, "TOP", 8, 1)
+        slot.badge:SetWordWrap(false)
+        slot.badgeIcon = slot:CreateTexture(nil, "OVERLAY")
+        slot.badgeIcon:SetSize(16, 16)
+        slot.badgeIcon:SetPoint("RIGHT", slot.badge, "LEFT", -4, 0)
     end
-    return card
+    return slot
 end
 
-local function CreateAwardCard(parent)
-    local card = Card(parent, 112, AWARD_H, GOLD)
-    card:EnableMouse(true)
-    card:SetScript("OnEnter", function(self)
-        ShowStatTooltip(self, self.player)
-    end)
-    card:SetScript("OnLeave", HideTooltip)
-    card:SetScript("OnMouseUp", function()
-        Ceremony:Skip()
-    end)
+local function CreatePotgCard(parent)
+    local card = CreateFrame("Frame", nil, parent)
+    card:SetSize(POTG_W, POTG_H)
+    local bg = Solid(card, "BACKGROUND", -7, 0.06, 0.06, 0.09, 0.93)
+    bg:SetAllPoints()
+    local shine = Solid(card, "BACKGROUND", -6, 1, 1, 1, 1)
+    shine:SetPoint("TOPLEFT")
+    shine:SetPoint("TOPRIGHT")
+    shine:SetHeight(50)
+    Gradient(shine, ORANGE[1], ORANGE[2], ORANGE[3], 0, 0.14)
+    local top = Solid(card, "BORDER", 0, ORANGE[1], ORANGE[2], ORANGE[3], 0.95)
+    top:SetPoint("TOPLEFT")
+    top:SetPoint("TOPRIGHT")
+    top:SetHeight(2)
+    for _, e in ipairs({ { "BOTTOMLEFT", "BOTTOMRIGHT", "H" }, { "TOPLEFT", "BOTTOMLEFT", "W" }, { "TOPRIGHT", "BOTTOMRIGHT", "W" } }) do
+        local line = Solid(card, "BORDER", 0, ORANGE[1], ORANGE[2], ORANGE[3], 0.35)
+        line:SetPoint(e[1])
+        line:SetPoint(e[2])
+        if e[3] == "H" then
+            line:SetHeight(1)
+        else
+            line:SetWidth(1)
+        end
+    end
+    for _, x in ipairs({ 228, 640 }) do
+        local divider = Solid(card, "BORDER", 0, ORANGE[1], ORANGE[2], ORANGE[3], 0.25)
+        divider:SetPoint("TOPLEFT", x, -14)
+        divider:SetPoint("BOTTOMLEFT", x, 14)
+        divider:SetWidth(1)
+    end
+    card.flash = Tex(card, "BACKGROUND", -5, "glow")
+    card.flash:SetSize(POTG_W * 1.1, POTG_H * 2.2)
+    card.flash:SetPoint("CENTER")
+    card.flash:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3])
+    card.flash:SetAlpha(0)
+
+    -- left: label and who
+    card.tag = Text(card, 9, { 1, 0.62, 0.3 }, nil, "LEFT")
+    card.tag:SetPoint("TOPLEFT", 16, -12)
+    card.label = Text(card, 18, { 1, 0.62, 0.22 }, "OUTLINE", "LEFT")
+    card.label:SetPoint("TOPLEFT", 16, -26)
     card.icon = card:CreateTexture(nil, "ARTWORK")
     card.icon:SetSize(34, 34)
-    card.icon:SetPoint("TOP", 0, -10)
-    card.title = Text(card, 12, GOLD)
-    card.title:SetPoint("TOP", 0, -50)
-    card.name = Text(card, 13, GOLD, "OUTLINE")
-    card.name:SetPoint("TOP", 0, -66)
-    card.value = Text(card, 10, { 0.85, 0.85, 0.85 })
-    card.value:SetPoint("TOP", 0, -84)
-    for _, fs in ipairs({ card.title, card.name, card.value }) do
-        fs:SetWordWrap(false)
-    end
+    card.icon:SetPoint("BOTTOMLEFT", 16, 14)
+    card.name = Text(card, 15, GOLD, "OUTLINE", "LEFT")
+    card.name:SetPoint("TOPLEFT", card.icon, "TOPRIGHT", 8, -1)
+    card.name:SetWidth(160)
+    card.name:SetWordWrap(false)
+    card.role = Text(card, 10, { 0.7, 0.7, 0.7 }, nil, "LEFT")
+    card.role:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -3)
+
+    -- middle: the moment
+    card.fight = Text(card, 12, GOLD, nil, "LEFT")
+    card.fight:SetPoint("TOPLEFT", 244, -14)
+    card.fight:SetWidth(380)
+    card.fight:SetWordWrap(false)
+    card.text = Text(card, 14, { 1, 1, 1 }, nil, "LEFT")
+    card.text:SetPoint("TOPLEFT", card.fight, "BOTTOMLEFT", 0, -6)
+    card.text:SetWidth(380)
+    card.text:SetJustifyV("TOP")
+    card.text:SetMaxLines(2)
+    card.detail = Text(card, 11, { 0.75, 0.75, 0.75 }, nil, "LEFT")
+    card.detail:SetPoint("BOTTOMLEFT", 244, 13)
+    card.detail:SetWidth(380)
+    card.detail:SetWordWrap(false)
+
+    -- right: key ability
+    card.spellLabel = Text(card, 10, { 0.7, 0.7, 0.7 }, nil, "LEFT")
+    card.spellLabel:SetPoint("TOPLEFT", 656, -16)
+    card.spellIcon = card:CreateTexture(nil, "ARTWORK")
+    card.spellIcon:SetSize(36, 36)
+    card.spellIcon:SetPoint("TOPLEFT", 656, -38)
+    card.spell = Text(card, 12, { 0.95, 0.95, 0.95 }, nil, "LEFT")
+    card.spell:SetPoint("TOPLEFT", card.spellIcon, "TOPRIGHT", 8, -2)
+    card.spell:SetWidth(POTG_W - 656 - 36 - 8 - 14)
+    card.spell:SetMaxLines(2)
+    card.spellShare = Text(card, 11, { 1, 0.62, 0.3 }, nil, "LEFT")
+    card.spellShare:SetPoint("BOTTOMLEFT", card.spellIcon, "BOTTOMRIGHT", 8, 1)
+
+    card.empty = Text(card, 12, { 0.6, 0.6, 0.6 })
+    card.empty:SetPoint("CENTER", 110, 0)
     return card
 end
 
@@ -452,7 +578,7 @@ function Ceremony:Create()
     end
     frame = CreateFrame("Frame", "PodiumCeremonyFrame", UIParent)
     frame:SetSize(WIDTH, HEIGHT)
-    frame:SetPoint("CENTER", 0, 30)
+    frame:SetPoint("CENTER", 0, 20)
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
     frame:SetToplevel(true)
     frame:SetClampedToScreen(true)
@@ -471,7 +597,15 @@ function Ceremony:Create()
     frame:SetScript("OnUpdate", function(_, elapsed)
         Ceremony:OnUpdate(elapsed)
     end)
-    frame:SetScript("OnHide", HideTooltip)
+    frame:SetScript("OnHide", function()
+        HideTooltip()
+        for _, slot in ipairs(frame.slots or {}) do -- (also runs once while being created)
+            if slot.model.ClearModel then
+                pcall(slot.model.ClearModel, slot.model)
+            end
+            slot.playing, slot.nextEmote = false, nil
+        end
+    end)
     frame:Hide()
     -- Esc closes it.
     if UISpecialFrames then
@@ -483,17 +617,23 @@ function Ceremony:Create()
     frame.dim:SetPoint("TOPLEFT", UIParent, "TOPLEFT")
     frame.dim:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT")
 
-    local bg = Solid(frame, "BACKGROUND", -7, 0.025, 0.025, 0.04, 0.95)
+    local bg = Solid(frame, "BACKGROUND", -7, 0.025, 0.025, 0.04, 0.96)
     bg:SetAllPoints()
     local top = Solid(frame, "BACKGROUND", -6, 1, 1, 1, 1)
     top:SetPoint("TOPLEFT")
     top:SetPoint("TOPRIGHT")
-    top:SetHeight(200)
-    if top.SetGradient and CreateColor then
-        pcall(top.SetGradient, top, "VERTICAL", CreateColor(0.3, 0.2, 0.04, 0), CreateColor(0.35, 0.24, 0.05, 0.4))
-    else
-        top:SetColorTexture(0.35, 0.24, 0.05, 0.15)
-    end
+    top:SetHeight(220)
+    Gradient(top, 0.35, 0.24, 0.05, 0, 0.4)
+    -- stage floor
+    local floor = Solid(frame, "BACKGROUND", -5, 1, 1, 1, 1)
+    floor:SetPoint("TOPLEFT", 2, -(STAGE_BOTTOM - 70))
+    floor:SetPoint("TOPRIGHT", -2, -(STAGE_BOTTOM - 70))
+    floor:SetHeight(70)
+    Gradient(floor, 0.4, 0.3, 0.12, 0.28, 0)
+    local edge = Solid(frame, "BORDER", 0, GOLD[1], GOLD[2], GOLD[3], 0.35)
+    edge:SetPoint("TOPLEFT", 16, -STAGE_BOTTOM)
+    edge:SetPoint("TOPRIGHT", -16, -STAGE_BOTTOM)
+    edge:SetHeight(1)
     for _, e in ipairs({ { "TOPLEFT", "TOPRIGHT", "H" }, { "BOTTOMLEFT", "BOTTOMRIGHT", "H" },
         { "TOPLEFT", "BOTTOMLEFT", "W" }, { "TOPRIGHT", "BOTTOMRIGHT", "W" } }) do
         local line = Solid(frame, "BORDER", 0, GOLD[1], GOLD[2], GOLD[3], 0.75)
@@ -506,17 +646,20 @@ function Ceremony:Create()
         end
     end
 
-    -- Light rays behind the MVP card (drawn under the cards).
-    frame.rays = Tex(frame, "ARTWORK", 0, "rays", 440)
-    frame.rays:SetPoint("CENTER", frame, "CENTER", 0, 270 - 100 - 98)
+    -- Light rays behind the MVP (drawn under the characters).
+    frame.rays = Tex(frame, "ARTWORK", 0, "rays", 480)
+    frame.rays:SetPoint("CENTER", frame, "TOP", 0, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].model / 2))
     frame.rays:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
 
     frame.header = CreateHeader(frame)
     frame.potg = CreatePotgCard(frame)
-    frame.mvp = CreateMvpCard(frame)
-    frame.board = CreateScoreboard(frame)
-    frame.awards = {}
-    frame.awardCount = 0
+    frame.slots = {}
+    for rank = 1, MAX_SLOTS do
+        frame.slots[rank] = CreateSlot(frame, rank)
+    end
+
+    frame.more = Text(frame, 11, { 0.6, 0.6, 0.6 }, nil, "RIGHT")
+    frame.more:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", -18, -(STAGE_BOTTOM - 4))
 
     frame.close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     frame.close:SetPoint("TOPRIGHT", -4, -4)
@@ -526,7 +669,7 @@ function Ceremony:Create()
 
     frame.closeButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     frame.closeButton:SetSize(100, 24)
-    frame.closeButton:SetPoint("BOTTOMRIGHT", -18, 14)
+    frame.closeButton:SetPoint("BOTTOMRIGHT", -16, 14)
     frame.closeButton:SetText(L.CLOSE)
     frame.closeButton:SetScript("OnClick", function()
         Ceremony:Hide()
@@ -541,7 +684,7 @@ function Ceremony:Create()
     end)
 
     frame.hint = Text(frame, 11, { 0.55, 0.55, 0.55 }, nil, "LEFT")
-    frame.hint:SetPoint("BOTTOMLEFT", 20, 20)
+    frame.hint:SetPoint("BOTTOMLEFT", 18, 20)
     return frame
 end
 
@@ -555,7 +698,8 @@ end
 
 local function FillPotg(card, potg)
     local shown = potg ~= nil
-    for _, region in ipairs({ card.icon, card.name, card.role, card.fight, card.text, card.detail, card.spellIcon, card.spell }) do
+    for _, region in ipairs({ card.icon, card.name, card.role, card.fight, card.text, card.detail,
+        card.spellLabel, card.spellIcon, card.spell, card.spellShare }) do
         region:SetShown(shown)
     end
     card.tag:SetText(Spaced(L.POTG_TAG))
@@ -580,106 +724,159 @@ local function FillPotg(card, potg)
     card.detail:SetText(potg.detail or "")
     local name, icon = SpellInfo(potg.spellID)
     if name then
+        card.spellLabel:SetText(L.KEY_ABILITY)
         card.spellIcon:SetTexture(icon or QUESTION_MARK)
+        card.spell:SetText(name)
         local share = potg.spellTotal and potg.spellTotal > 0 and potg.spellAmount and potg.spellAmount / potg.spellTotal
-        card.spell:SetText(share and L.KEY_ABILITY:format(name, Percent(share)) or name)
+        card.spellShare:SetText(share and L.KEY_ABILITY_SHARE:format(Percent(share)) or "")
     else
+        card.spellLabel:Hide()
         card.spellIcon:Hide()
         card.spell:Hide()
+        card.spellShare:Hide()
     end
 end
 
-local function FillMvp(card, p)
-    card.player = p
-    card.label:SetText(L.MVP)
-    SetClassIcon(card.icon, p.class)
-    SetRoleIcon(card.roleIcon, p.role)
-    card.name:SetText(ns.Awards.ShortName(p.name))
-    card.name:SetTextColor(ClassColor(p.class))
-    card.score:SetText(L.SCORE:format(p.score))
-    local Num = ns.FormatNumber
-    if p.role == "HEALER" then
-        card.stat1:SetText(("%s %s (%d%%)  ·  %s %s"):format(L.STAT_HEALING, Num(p.heal), Percent(p.healShare), L.STAT_HPS, Num(p.hps)))
-    elseif p.role == "TANK" then
-        card.stat1:SetText(("%s %s (%d%%)  ·  %s %s"):format(L.STAT_TAKEN, Num(p.taken), Percent(p.takenShare), L.STAT_DPS, Num(p.dps)))
-    else
-        card.stat1:SetText(("%s %s (%d%%)  ·  %s %s"):format(L.STAT_DAMAGE, Num(p.dmg), Percent(p.dmgShare), L.STAT_DPS, Num(p.dps)))
+-- Titles won by each player: MVP, play of the game, then category awards.
+local function Titles(report)
+    local titles = {}
+    local function Add(p, title)
+        titles[p] = titles[p] or {}
+        table.insert(titles[p], title)
     end
-    card.stat2:SetText(("%s  ·  %s  ·  %s"):format(L.STAT_LINE_INTERRUPTS:format(p.ints),
-        L.STAT_LINE_DISPELS:format(p.disp), L.STAT_LINE_DEATHS:format(p.deaths)))
-    card.stat3:SetText(RoleName(p.role))
+    if report.mvp then
+        Add(report.mvp, { id = "MVP", text = L.MVP, value = L.SCORE:format(report.mvp.score) })
+    end
+    if report.potg then
+        Add(report.potg.player, { id = "POTG", text = L.POTG, value = report.potg.fightName })
+    end
+    for _, award in ipairs(report.awards) do
+        Add(award.player, { id = award.id, text = award.title, value = award.value, icon = award.icon })
+    end
+    return titles
 end
+Ceremony.Titles = Titles
 
-local function FillBoard(card, players, report)
-    card.label:SetText(L.SCOREBOARD)
-    card.hint:SetText(L.SCOREBOARD_HINT)
-    local top = players[1] and max(1, players[1].score) or 1
-    for i, row in ipairs(card.rows) do
-        local p = players[i]
-        row.player = p
-        if p then
-            local r, g, b = ClassColor(p.class)
-            row.rank:SetText(tostring(i))
-            row.rank:SetTextColor(i == 1 and GOLD[1] or 0.7, i == 1 and GOLD[2] or 0.7, i == 1 and GOLD[3] or 0.7)
-            SetRoleIcon(row.role, p.role)
-            row.name:SetText(ns.Awards.ShortName(p.name))
-            row.name:SetTextColor(r, g, b)
-            row.score:SetText(tostring(p.score))
-            row.bar:SetColorTexture(r, g, b, p.isLocal and 0.32 or 0.2)
-            row.bar:SetWidth(max(1, (SIDE_CARD_W - 24) * min(1, p.score / top)))
-            row:Show()
-        else
-            row:Hide()
-        end
+-- The emotes for a player: from their headline title, but the joke awards
+-- win over an ordinary category award.
+local function EmotesFor(titles)
+    local headline = titles and titles[1]
+    if not headline then
+        return EMOTES.NONE
     end
-    local Num = ns.FormatNumber
-    local totals, time = report.totals, report.combatTime or 0
-    local perSecond = function(value)
-        return Num(time > 0 and value / time or 0)
-    end
-    local lines = {
-        L.BOARD_DAMAGE:format(Num(totals.dmg), perSecond(totals.dmg)),
-        L.BOARD_HEALING:format(Num(totals.heal), perSecond(totals.heal)),
-        L.BOARD_TIME:format(ns.FormatTime(time)),
-    }
-    for i, line in ipairs(card.totals) do
-        line:SetText(lines[i])
-        line:SetShown(#players <= 5)
-    end
-end
-
-local function FillAwards(awards)
-    local count = #awards
-    local gap = 8
-    local width = count > 0 and min(120, math.floor((WIDTH - 2 * SIDE_MARGIN - (count - 1) * gap) / count)) or 0
-    local total = count * width + max(0, count - 1) * gap
-    for i = 1, max(count, #frame.awards) do
-        local card = frame.awards[i]
-        local award = awards[i]
-        if award and not card then
-            card = CreateAwardCard(frame)
-            frame.awards[i] = card
-        end
-        if card then
-            if award then
-                card:SetWidth(width)
-                card.title:SetWidth(width - 8)
-                card.name:SetWidth(width - 8)
-                card.value:SetWidth(width - 8)
-                card.player = award.player
-                card.icon:SetTexture(award.icon or QUESTION_MARK)
-                card.title:SetText(award.title)
-                card.name:SetText(ns.Awards.ShortName(award.player.name))
-                card.name:SetTextColor(ClassColor(award.player.class))
-                card.value:SetText(award.value or "")
-                card.baseX = -total / 2 + width / 2 + (i - 1) * (width + gap)
-                card:Show()
-            else
-                card:Hide()
+    if headline.id ~= "MVP" and headline.id ~= "POTG" then
+        for _, title in ipairs(titles) do
+            if title.id == "DEATHS" or title.id == "FLOOR" then
+                return EMOTES[title.id]
             end
         end
     end
-    frame.awardCount = count
+    return EMOTES[headline.id] or EMOTES.NONE
+end
+Ceremony.EmotesFor = EmotesFor
+
+local function FillSlot(slot, p, titles)
+    slot.player, slot.titles = p, titles
+    local r, g, b = ClassColor(p.class)
+    slot.name:SetText(ns.Awards.ShortName(p.name))
+    slot.name:SetTextColor(r, g, b)
+    slot.score:SetText(L.SCORE:format(p.score))
+    SetRoleIcon(slot.roleIcon, p.role)
+    slot.beam:SetVertexColor(slot.rank == 1 and GOLD[1] or r, slot.rank == 1 and GOLD[2] or g, slot.rank == 1 and GOLD[3] or b)
+    slot.pool:SetVertexColor(r, g, b)
+
+    -- headline above the head, the rest in small print
+    local headline = titles and titles[1]
+    local rest = {}
+    for i = 2, titles and #titles or 0 do
+        rest[#rest + 1] = titles[i].text
+    end
+    if slot.rank == 1 then
+        slot.badge:SetText(L.MVP)
+        slot.extra:SetText(table.concat(rest, "  ·  "))
+    else
+        slot.badge:SetText(headline and headline.text or "")
+        if headline and headline.id == "POTG" then
+            slot.badge:SetTextColor(1, 0.62, 0.22)
+        else
+            slot.badge:SetTextColor(GOLD[1], GOLD[2], GOLD[3])
+        end
+        local icon = headline and headline.icon
+        slot.badgeIcon:SetShown(icon ~= nil)
+        if icon then
+            slot.badgeIcon:SetTexture(icon)
+        end
+        -- keep icon + text centered together
+        slot.badge:ClearAllPoints()
+        slot.badge:SetPoint("BOTTOM", slot.extra, "TOP", icon and 10 or 0, 1)
+        slot.extra:SetText(table.concat(rest, "  ·  "))
+    end
+
+    -- the character
+    slot.emotes, slot.emoteIndex = EmotesFor(titles), 0
+    slot.playing, slot.nextEmote, slot.animation = false, nil, nil
+    slot.hasModel = LoadModel(slot, p)
+    slot.model:SetShown(slot.hasModel)
+    slot.icon:SetShown(not slot.hasModel)
+    slot.ring:SetShown(not slot.hasModel)
+    if not slot.hasModel then
+        SetClassIcon(slot.icon, p.class)
+        slot.ring:SetVertexColor(r, g, b)
+    end
+end
+
+-- Places the top players on the podium. Returns the slots in reveal order.
+local function FillStage(report)
+    local titles = Titles(report)
+    local used = {}
+    for rank = 1, MAX_SLOTS do
+        local p = report.players[rank]
+        local slot = frame.slots[rank]
+        if p then
+            FillSlot(slot, p, titles[p])
+            used[#used + 1] = slot
+            slot:Show()
+        else
+            slot.player = nil
+            slot:Hide()
+        end
+    end
+    -- left to right: 4th, 2nd, MVP, 3rd, 5th (only the ones present)
+    local row, width = {}, 0
+    for _, rank in ipairs(STAGE_ORDER) do
+        if report.players[rank] then
+            row[#row + 1] = frame.slots[rank]
+            width = width + STEPS[rank].w
+        end
+    end
+    width = width + (#row - 1) * SLOT_GAP
+    local x = -width / 2
+    local mvpX = 0
+    for position, slot in ipairs(row) do
+        local w = STEPS[slot.rank].w
+        slot.baseX = x + w / 2
+        slot.position = position
+        if slot.rank == 1 then
+            mvpX = slot.baseX
+        end
+        x = x + w + SLOT_GAP
+    end
+    -- turn slightly toward the middle
+    for _, slot in ipairs(used) do
+        slot.facing = slot.baseX < mvpX and 0.35 or (slot.baseX > mvpX and -0.35 or 0)
+        if slot.hasModel then
+            pcall(slot.model.SetFacing, slot.model, slot.facing)
+        end
+    end
+    frame.rays:ClearAllPoints()
+    frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].model / 2))
+    local hidden = #report.players - #used
+    frame.more:SetText(hidden > 0 and L.MORE_PLAYERS:format(hidden) or "")
+    -- reveal from the outside in, MVP last
+    table.sort(used, function(a, b)
+        return a.rank > b.rank
+    end)
+    return used
 end
 
 --------------------------------------------------------------------------
@@ -694,16 +891,32 @@ local function Place(element, x, y, scale)
     f:SetPoint("CENTER", frame, "CENTER", x / scale, y / scale)
 end
 
+local function SetSlotAlpha(slot, alpha)
+    slot:SetAlpha(alpha)
+    if slot.hasModel and slot.model.SetModelAlpha then
+        pcall(slot.model.SetModelAlpha, slot.model, alpha)
+    end
+end
+
 local function Apply(element, p)
     local x, y = element.x, element.y
+    local alpha
     if element.kind == "pop" then
         local from = element.from or 1.4
         Place(element, x, y, max(0.5, from - (from - 1) * EaseOutBack(p)))
-        element.frame:SetAlpha(min(1, p * 1.6))
-    elseif element.kind == "left" or element.kind == "right" then
-        local dx = (element.kind == "left" and -60 or 60) * (1 - EaseOut(p))
-        Place(element, x + dx, y, 1)
-        element.frame:SetAlpha(p)
+        alpha = min(1, p * 1.6)
+    elseif element.kind == "rise" then
+        Place(element, x, y - 40 * (1 - EaseOut(p)), 1)
+        alpha = p
+    end
+    if element.slot then
+        SetSlotAlpha(element.frame, alpha)
+    else
+        element.frame:SetAlpha(alpha)
+    end
+    if p >= 1 and element.slot and element.frame.hasModel and not element.frame.playing
+        and not element.frame.nextEmote then
+        PlayEmote(element.frame)
     end
 end
 
@@ -716,20 +929,25 @@ local function AddElement(f, kind, start, dur, x, y, sound, extra)
     return element
 end
 
-local function BuildTimeline()
+local function BuildTimeline(slots)
     wipe(elements)
+    frame.mvpStart = nil
     local cy = HEIGHT / 2
-    AddElement(frame.header, "pop", 0, 0.45, 0, cy - 48, "title", { from = 1.25 })
-    AddElement(frame.potg, "left", 0.7, 0.45, -(WIDTH / 2) + SIDE_MARGIN + SIDE_CARD_W / 2, cy - 108 - SIDE_CARD_H / 2, "potg")
-    AddElement(frame.mvp, "pop", 1.7, 0.55, 0, cy - 100 - MVP_H / 2, "mvp", { from = 1.6 })
-    AddElement(frame.board, "right", 2.6, 0.4, WIDTH / 2 - SIDE_MARGIN - SIDE_CARD_W / 2, cy - 108 - SIDE_CARD_H / 2)
-    local start = 3.1
-    for i = 1, frame.awardCount do
-        local card = frame.awards[i]
-        AddElement(card, "pop", start, 0.3, card.baseX, cy - 384 - AWARD_H / 2, i == 1 and "award" or nil, { from = 1.5 })
-        start = start + 0.15
+    local stageY = cy - (STAGE_TOP + STAGE_BOTTOM) / 2
+    AddElement(frame.header, "pop", 0, 0.45, 0, cy - 46, "title", { from = 1.25 })
+    AddElement(frame.potg, "rise", 0.6, 0.45, 0, cy - POTG_TOP - POTG_H / 2, "potg")
+    local start = 1.3
+    for _, slot in ipairs(slots) do
+        local mvp = slot.rank == 1
+        if mvp then
+            start = start + 0.2
+        end
+        AddElement(slot, "pop", start, mvp and 0.55 or 0.35, slot.baseX, stageY,
+            mvp and "mvp" or (start == 1.3 and "lineup" or nil), { from = mvp and 1.5 or 1.3, slot = true })
+        frame.mvpStart = mvp and start or frame.mvpStart
+        start = start + (mvp and 0.55 or 0.25)
     end
-    finishTime = start + 0.35
+    finishTime = start + 0.2
 end
 
 function Ceremony:OnUpdate(elapsed)
@@ -747,21 +965,31 @@ function Ceremony:OnUpdate(elapsed)
             element.done = p >= 1
         end
     end
+    -- Emotes: the next one after a short pause.
+    for _, slot in ipairs(frame.slots) do
+        if slot.player and slot.hasModel and slot.nextEmote and clock >= slot.nextEmote then
+            PlayEmote(slot)
+        end
+    end
     -- Ongoing effects.
+    local mvpStart = frame.mvpStart or 0
+    local mvpIn = min(1, max(0, (clock - mvpStart) / 0.7))
     frame.rays:SetRotation(clock * 0.22)
-    local mvpIn = min(1, max(0, (clock - 1.7) / 0.7))
-    frame.rays:SetAlpha(mvpIn * (0.42 + 0.08 * sin(clock * 1.7)))
-    frame.mvp.glow:SetAlpha(mvpIn * (0.55 + 0.25 * sin(clock * 2.4)))
-    frame.mvp.ring:SetAlpha(mvpIn * (0.6 + 0.3 * sin(clock * 2.4 + 1)))
+    frame.rays:SetAlpha(mvpIn * (0.4 + 0.08 * sin(clock * 1.7)))
     local twinkle = 0.6 + 0.4 * sin(clock * 3)
     frame.header.starL:SetAlpha(twinkle)
     frame.header.starR:SetAlpha(1.2 - twinkle)
     frame.header.starL:SetRotation(clock * 0.8)
     frame.header.starR:SetRotation(-clock * 0.8)
-    frame.mvp.laurelL:SetAlpha(mvpIn * twinkle)
-    frame.mvp.laurelR:SetAlpha(mvpIn * (1.2 - twinkle))
-    local flash = clock - 0.7
-    frame.potg.flash:SetAlpha(flash > 0 and max(0, 0.7 * (1 - flash / 1.2)) or 0)
+    local mvp = frame.slots[1]
+    mvp.laurelL:SetAlpha(twinkle)
+    mvp.laurelR:SetAlpha(1.2 - twinkle)
+    mvp.beam:SetAlpha(0.28 + 0.1 * sin(clock * 2.4))
+    for _, slot in ipairs(frame.slots) do
+        slot.pool:SetAlpha(0.45 + 0.15 * sin(clock * 2 + slot.rank))
+    end
+    local flash = clock - 0.6
+    frame.potg.flash:SetAlpha(flash > 0 and max(0, 0.6 * (1 - flash / 1.2)) or 0)
 
     if clock >= finishTime and closeIn then
         if not frame:IsMouseOver() then
@@ -799,9 +1027,6 @@ function Ceremony:Show(report)
     header.title:SetText(report.title)
     header.sub:SetText(report.subtitle)
     FillPotg(frame.potg, report.potg)
-    FillMvp(frame.mvp, report.mvp)
-    FillBoard(frame.board, report.players, report)
-    FillAwards(report.awards)
     frame.hint:SetText(L.HINT)
 
     local db = ns.db or {}
@@ -809,14 +1034,14 @@ function Ceremony:Show(report)
     frame.dim:SetShown(db.dim ~= false)
     closeIn = (db.autoClose or 0) > 0 and db.autoClose or nil
 
-    BuildTimeline()
+    frame:Show() -- models load only while shown
+    local slots = FillStage(report)
+    BuildTimeline(slots)
     clock = 0
     for _, element in ipairs(elements) do
         Apply(element, 0)
-        element.frame:SetAlpha(0)
     end
     frame.rays:SetAlpha(0)
-    frame:Show()
     self:OnUpdate(0)
 end
 
@@ -867,8 +1092,4 @@ end
 -- For tests and the layout preview.
 function Ceremony:GetFrame()
     return frame
-end
-
-function Ceremony:Finish()
-    self:Skip()
 end

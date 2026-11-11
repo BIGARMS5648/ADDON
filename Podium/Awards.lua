@@ -514,6 +514,25 @@ local DEMO_SPELLS = {
 }
 local DEMO_HEAL = 2061 -- Flash Heal
 
+-- Group members, so the preview shows their real characters.
+local function PartyMembers()
+    local members = {}
+    for i = 1, 4 do
+        local unit = "party" .. i
+        if ns.Safe(UnitExists(unit)) then
+            local _, class = UnitClass(unit)
+            local ok, role = pcall(UnitGroupRolesAssigned or function() end, unit)
+            members[#members + 1] = {
+                guid = ns.Safe(UnitGUID(unit)),
+                name = ns.Safe(UnitName(unit)),
+                class = ns.Safe(class),
+                role = ok and ns.Safe(role) or nil,
+            }
+        end
+    end
+    return members
+end
+
 function Awards.DemoRun()
     local myName = ns.Safe(UnitName("player")) or "Podium"
     local _, myClass = UnitClass("player")
@@ -526,6 +545,30 @@ function Awards.DemoRun()
         { key = "demo-hunter", name = L.DEMO_HUNTER, class = "HUNTER", role = "DAMAGER", dps = 470, dtps = 60, avoid = 18 },
         { key = "demo-me", name = myName, class = myClass, role = "DAMAGER", dps = 540, dtps = 80, isLocal = true },
     }
+    cast[5].key = ns.Safe(UnitGUID("player")) or cast[5].key
+    -- Real group members take the made-up parts (matching roles first).
+    local free = { cast[1], cast[2], cast[3], cast[4] }
+    local function Take(member, sameRole)
+        for i, part in ipairs(free) do
+            if not sameRole or part.role == member.role then
+                table.remove(free, i)
+                part.key = member.guid or part.key
+                part.name = member.name or part.name
+                part.class = member.class or part.class
+                return true
+            end
+        end
+    end
+    local members = PartyMembers()
+    local waiting = {}
+    for _, member in ipairs(members) do
+        if not Take(member, true) then
+            waiting[#waiting + 1] = member
+        end
+    end
+    for _, member in ipairs(waiting) do
+        Take(member, false)
+    end
     local plan = {
         { L.DEMO_TRASH, 31 }, { L.DEMO_TRASH, 26 }, { L.DEMO_BOSS1, 64, boss = true },
         { L.DEMO_TRASH, 42 }, { L.DEMO_TRASH, 23 }, { L.DEMO_BOSS2, 88, boss = true, star = "demo-me" },
@@ -544,6 +587,10 @@ function Awards.DemoRun()
     for _, member in ipairs(cast) do
         run.roster[member.key] = { name = member.name, class = member.class, role = member.role, isLocal = member.isLocal }
     end
+    local parts = { "demo-tank", "demo-heal", "demo-rogue", "demo-hunter", "demo-me" }
+    for i, member in ipairs(cast) do
+        member.part = parts[i] -- the made-up role it plays in the plan below
+    end
     for index, step in ipairs(plan) do
         local name, duration = step[1], step[2]
         local fight = { sid = index, name = name, dur = duration, p = {}, done = true }
@@ -551,7 +598,7 @@ function Awards.DemoRun()
         for _, member in ipairs(cast) do
             local swing = 0.85 + 0.3 * Random()
             local stats = {}
-            local damage = member.dps * duration * swing * (step.star == member.key and 1.9 or 1)
+            local damage = member.dps * duration * swing * (step.star == member.part and 1.9 or 1)
             stats.dmg = Round(damage)
             stats.dsp = DEMO_SPELLS[member.class] or 6603
             stats.dspA = Round(damage * (0.3 + 0.2 * Random()))
@@ -570,7 +617,7 @@ function Awards.DemoRun()
             if member.disp and Random() < member.disp * duration / 60 then
                 stats.disp = 1 + floor(Random() * 2)
             end
-            stats.deaths = step.deaths and step.deaths[member.key] or nil
+            stats.deaths = step.deaths and step.deaths[member.part] or nil
             fight.p[member.key] = stats
         end
         local fkey = "1:" .. index

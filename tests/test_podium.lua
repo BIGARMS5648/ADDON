@@ -680,40 +680,213 @@ local function update(seconds, step)
     end
 end
 
+local ANIM = ns.Ceremony.ANIM
+
+local function slotFor(name)
+    for _, slot in ipairs(frame().slots) do
+        if slot.player and slot.player.name == name then
+            return slot
+        end
+    end
+end
+
 test("preview: reveal, skip and contents", function()
     reset()
     mock.units.player.name = "나"
     SlashCmdList.PODIUM("test")
     assert(shown(), "shown")
     local f = frame()
-    eq(f.mvp.alpha, 0, "MVP hidden at first")
+    local mvp = f.slots[1]
+    eq(mvp.alpha, 0, "MVP hidden at first")
     update(1)
-    eq(f.mvp.alpha, 0, "MVP not yet")
+    eq(mvp.alpha, 0, "MVP not yet")
     assert(f.potg.alpha > 0, "play of the game revealed first")
     f.scripts.OnMouseUp(f)
-    eq(f.mvp.alpha, 1, "skip shows everything")
-    eq(f.board.alpha, 1, "scoreboard")
-    for i = 1, f.awardCount do
-        eq(f.awards[i].alpha, 1, "award " .. i)
-        eq(f.awards[i].scale, 1, "award scale " .. i)
+    for rank = 1, 5 do
+        eq(f.slots[rank].alpha, 1, "slot " .. rank .. " shown")
+        eq(f.slots[rank].scale, 1, "slot " .. rank .. " scale")
+        eq(f.slots[rank].model.modelAlpha, 1, "model " .. rank .. " faded in")
     end
     local rep = report()
-    local me
-    for _, p in ipairs(rep.players) do
-        if p.isLocal then
-            me = p
-        end
+    eq(rep.mvp.name, "나", "you are the MVP of the preview")
+    eq(mvp.model.unit, "player", "your own character")
+    eq(mvp.model.animation, ANIM.FLEX, "MVP flexes")
+    eq(mvp.badge.text, L.MVP, "MVP badge")
+    -- the rest of the party plays the other parts with their own characters
+    for i = 2, 5 do
+        local slot = slotFor(PARTY[i].name)
+        assert(slot, PARTY[i].name .. " on the podium")
+        eq(slot.model.unit, PARTY[i].unit, PARTY[i].name .. "'s character")
+        eq(slot.model.shown, true, "model shown")
+        eq(slot.icon.shown, false, "no icon")
+        assert(slot.model.animation and slot.model.animation ~= ANIM.STAND, "emoting")
     end
-    assert(me and me.name == "나", "you are in the preview")
     eq(rep.title, L.TITLE_DEMO, "title")
-    assert(f.mvp.name.text and f.mvp.name.text ~= "", "MVP name")
     assert(f.potg.text.text and f.potg.text.text ~= "", "POTG text")
     eq(f.header.title.text, L.TITLE_DEMO, "header")
     assert(#mock.sounds >= 2, "sounds")
-    -- every card fits inside the window
-    for _, card in ipairs({ f.potg, f.mvp, f.board }) do
-        assert(card.width <= 800 and card.height <= 540, "card size")
+    assert(f.width <= 900 and f.height <= 620, "window fits a small screen")
+end)
+
+test("preview when alone: stand-ins for the made-up party", function()
+    reset()
+    solo()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local shownModels, icons = 0, 0
+    for _, slot in ipairs(frame().slots) do
+        if slot.player then
+            if slot.model.shown then
+                shownModels = shownModels + 1
+                eq(slot.model.unit, "player", "only your character")
+            else
+                icons = icons + 1
+                eq(slot.icon.shown, true, "class icon")
+            end
+        end
     end
+    eq(shownModels, 1, "one character")
+    eq(icons, 4, "four icons")
+end)
+
+test("each player's own character emotes for their result", function()
+    reset()
+    PodiumDB.fun = false
+    local inst = enter()
+    journal(inst, { { "Boss", 901 } })
+    -- 3 interrupts in total make the rogue interrupt king, but no single
+    -- fight has the 3 a play of the game needs
+    local stats = typical(1.5, { [ROGUE] = { ints = 2 } })
+    pull("Trash", 30, typical())
+    killBoss("Boss", 901, 90, stats)
+    assert(shown(), "ceremony")
+    ns.Ceremony:Skip()
+    local f = frame()
+    local titles = ns.Ceremony.Titles(report())
+    for _, slot in ipairs(f.slots) do
+        local p = slot.player
+        if p then
+            local member
+            for _, m in ipairs(PARTY) do
+                if m.guid == p.key then
+                    member = m
+                end
+            end
+            eq(slot.model.unit, member.unit, p.name .. " matched to their unit")
+            eq(slot.model.animation, ns.Ceremony.EmotesFor(titles[p])[1], p.name .. " emote")
+        end
+    end
+    eq(f.slots[1].model.animation, ANIM.FLEX, "MVP flexes")
+    eq(slotFor("도적").model.animation, ANIM.POINT, "interrupt king points")
+    eq(slotFor("도적").badge.text, L.AWARD_INTERRUPTS, "badge above the head")
+    eq(slotFor("사냥꾼").model.animation, ANIM.APPLAUD, "no award: applauds the MVP")
+    eq(slotFor("사냥꾼").badge.text, "", "no badge")
+end)
+
+test("emote choice", function()
+    local E, emotes = ns.Ceremony.EMOTES, ns.Ceremony.EmotesFor
+    eq(emotes(nil), E.NONE, "nothing")
+    eq(emotes({ { id = "MVP" }, { id = "DEATHS" } }), E.MVP, "MVP wins")
+    eq(emotes({ { id = "POTG" }, { id = "FLOOR" } }), E.POTG, "POTG wins")
+    eq(emotes({ { id = "DAMAGE" }, { id = "DEATHS" } }), E.DEATHS, "joke award over a category")
+    eq(emotes({ { id = "TANK" } }), E.TANK, "category")
+    eq(E.DEATHS[1], ANIM.CRY, "cry")
+    eq(E.FLOOR[1], ANIM.CHICKEN, "chicken")
+end)
+
+test("emotes repeat after a short pause", function()
+    reset()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local model = frame().slots[1].model
+    eq(model.animation, ANIM.FLEX, "first emote")
+    model.scripts.OnAnimFinished(model)
+    eq(model.animation, ANIM.STAND, "stands for a moment")
+    update(3)
+    eq(model.animation, ANIM.ROAR, "next emote")
+    model.scripts.OnAnimFinished(model)
+    update(3)
+    eq(model.animation, ANIM.FLEX, "and around again")
+end)
+
+test("characters out of range or gone show their class icon", function()
+    reset()
+    mock.hidden.party2 = true
+    mock.noModel.party3 = true
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local hidden, broken = slotFor(PARTY[3].name), slotFor(PARTY[4].name)
+    eq(hidden.model.shown, false, "too far: no model")
+    eq(hidden.icon.shown, true, "icon instead")
+    eq(broken.model.shown, false, "model failed")
+    eq(broken.icon.shown, true, "icon instead")
+    eq(slotFor(PARTY[2].name).model.shown, true, "others still shown")
+    mock.hidden, mock.noModel = {}, {}
+    -- an old ceremony after the group broke up
+    ns.Ceremony:Hide()
+    eq(frame().slots[1].model.unit, nil, "models released on close")
+    solo()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    eq(slotFor(PARTY[2].name), nil, "party gone from the preview")
+end)
+
+test("characters can be turned off", function()
+    reset()
+    PodiumDB.models = false
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    for _, slot in ipairs(frame().slots) do
+        if slot.player then
+            eq(slot.model.shown, false, "no model")
+            eq(slot.icon.shown, true, "icon")
+        end
+    end
+    assert(mock.settings.PODIUM_models, "option in the settings")
+end)
+
+test("characters turn toward the MVP", function()
+    reset()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local mvpX = frame().slots[1].baseX
+    for _, slot in ipairs(frame().slots) do
+        if slot.player then
+            if slot.baseX < mvpX then
+                assert(slot.model.facing > 0, "left side turns right")
+            elseif slot.baseX > mvpX then
+                assert(slot.model.facing < 0, "right side turns left")
+            else
+                eq(slot.model.facing, 0, "MVP faces front")
+            end
+        end
+    end
+    eq(frame().slots[2].baseX < mvpX, true, "2nd place left of the MVP")
+    eq(frame().slots[3].baseX > mvpX, true, "3rd place right of the MVP")
+end)
+
+test("big groups: top five on the podium", function()
+    reset()
+    local r = ns.NewRun({ name = "Raid", type = "raid", mapID = 2 })
+    local p = {}
+    for i = 1, 8 do
+        local key = "Player-1-01" .. i
+        r.roster[key] = { name = "R" .. i, class = "MAGE", role = "DAMAGER" }
+        p[key] = { dmg = 1000 * i, taken = 10 }
+    end
+    r.fights["1:1"] = { name = "Pull", dur = 30, p = p }
+    r.order[1] = "1:1"
+    ns.Ceremony:Show(ns.Awards.Build(r, { kind = "clear" }))
+    ns.Ceremony:Skip()
+    local count = 0
+    for _, slot in ipairs(frame().slots) do
+        if slot.shown then
+            count = count + 1
+        end
+    end
+    eq(count, 5, "five places")
+    eq(frame().slots[1].player.name, "R8", "best in the middle")
+    assert(frame().more.text:find("3", 1, true), "the rest counted: " .. tostring(frame().more.text))
 end)
 
 test("auto close counts down, pauses under the mouse", function()

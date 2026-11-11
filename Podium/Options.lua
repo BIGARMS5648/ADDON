@@ -46,6 +46,7 @@ function ns:CreateOptions()
     Checkbox("raids", L.RAIDS)
 
     Header(L.HEADER_LOOK)
+    Checkbox("models", L.MODELS, L.MODELS_TT)
     Checkbox("dim", L.DIM)
     Checkbox("sound", L.SOUND)
     Checkbox("fun", L.FUN)

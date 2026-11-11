@@ -2,10 +2,11 @@
 """Render a picture of Podium's ceremony window from the addon's own code.
 
 The addon is loaded into the mocked WoW API from tests/, the preview ceremony
-(/mvp test) is opened and skipped to its end, and the resulting frame tree
-(anchors, sizes, colors, textures, text) is laid out and drawn with Pillow.
-Game art (class, role, spell and award icons) isn't available outside the
-game, so those are drawn as simple stand-ins.
+(/mvp test, with a made-up party) is opened and skipped to its end, and the
+resulting frame tree (anchors, sizes, colors, textures, text) is laid out and
+drawn with Pillow. Game art isn't available outside the game: the players' 3D
+characters are drawn as figures in the pose of the emote each one plays, and
+class, role, spell and award icons as simple stand-ins.
 
 Requires lupa, numpy, Pillow and a Korean font (fonts-nanum).
     python3 tools/render_podium_preview.py [koKR|enUS] [output.png]
@@ -182,6 +183,13 @@ local function draw(f)
     if f.shown == false then return end
     if f.template == "UIPanelButtonTemplate" or f.template == "UIPanelCloseButton" then
         add(f, f.template)
+    end
+    if f.kind == "DressUpModel" and f.unit then
+        add(f, "Model")
+        local item = items[#items]
+        local p = f.parent.player
+        item.class, item.animation, item.facing = p and p.class, f.animation, f.facing
+        item.alpha = item.alpha * (f.modelAlpha or 1)
     end
     local regions = {}
     for i, r in ipairs(f.regions or {}) do regions[#regions + 1] = { r = r, i = i } end
@@ -419,6 +427,86 @@ def draw_text(canvas, item):
     canvas.blend(np.asarray(layer).astype(np.float64) / 255.0, x0 - pad, top - pad)
 
 
+# Stand-in figures for the 3D characters, one pose per emote animation.
+# Coordinates: feet at y = 0, top of the head about 0.95; x to the viewer's right.
+STAND_ARMS = {"L": ((-0.15, 0.62), (-0.16, 0.47)), "R": ((0.15, 0.62), (0.16, 0.47))}
+POSES = {
+    0: {},
+    82: {"L": ((-0.28, 0.79), (-0.25, 0.97)), "R": ((0.28, 0.79), (0.25, 0.97))},  # flex
+    74: {"L": ((-0.22, 0.66), (-0.33, 0.56)), "R": ((0.22, 0.66), (0.33, 0.56)), "head": (0, 0.9)},  # roar
+    68: {"L": ((-0.19, 0.92), (-0.27, 1.07)), "R": ((0.19, 0.92), (0.27, 1.07))},  # cheer
+    69: {"L": ((-0.2, 0.92), (-0.13, 1.07)), "R": ((0.22, 0.62), (0.09, 0.5)), "lean": 0.05},  # dance
+    80: {"L": ((-0.16, 0.62), (-0.02, 0.71)), "R": ((0.16, 0.62), (0.02, 0.71))},  # applaud
+    66: {"L": ((-0.13, 0.55), (-0.1, 0.42)), "R": ((0.13, 0.55), (0.1, 0.42)), "head": (0, 0.72), "shoulders": 0.68},  # bow
+    113: {"R": ((0.24, 0.8), (0.07, 0.9))},  # salute
+    84: {"R": ((0.27, 0.79), (0.43, 0.83))},  # point
+    67: {"R": ((0.24, 0.9), (0.28, 1.05))},  # wave
+    78: {"L": ((-0.25, 0.68), (-0.1, 0.74)), "R": ((0.25, 0.68), (0.1, 0.74))},  # chicken
+    77: {"L": ((-0.14, 0.7), (-0.05, 0.85)), "R": ((0.14, 0.7), (0.05, 0.85)), "head": (0, 0.85)},  # cry
+}
+CLASS_RGB = {"WARRIOR": (0.78, 0.61, 0.43), "PRIEST": (0.92, 0.92, 0.92), "ROGUE": (1, 0.96, 0.41),
+             "HUNTER": (0.67, 0.83, 0.45), "MAGE": (0.25, 0.78, 0.92)}
+
+
+def draw_model(canvas, item):
+    x0, y0, x1, y1 = canvas.box(item)
+    w, h = int(round(x1 - x0)), int(round(y1 - y0))
+    if w <= 0 or h <= 0 or item["alpha"] <= 0.003:
+        return
+    ss = 3
+    W, H = w * ss, h * ss
+    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    fh = 0.84 * H
+    base = H - 0.05 * H
+    pose = POSES.get(int(item["animation"] or 0), {})
+    lean = pose.get("lean", 0)
+
+    def P(x, y):
+        return (W / 2 + (x + lean * y) * fh, base - y * fh)
+
+    color = CLASS_RGB.get(item["class"], (0.7, 0.7, 0.7))
+    body = tuple(int(c * 200) for c in color) + (255,)
+    light = tuple(int(min(255, c * 255 + 30)) for c in color) + (255,)
+    dark = (12, 10, 8, 255)
+    sy = pose.get("shoulders", 0.78)
+    head = pose.get("head", (0, 0.88))
+    arms = {side: pose.get(side, STAND_ARMS[side]) for side in ("L", "R")}
+
+    def shape(fill, grow):
+        g = grow * fh
+        for sx in (-1, 1):  # legs
+            d.line([P(sx * 0.06, 0.47), P(sx * 0.085, 0.03)], fill=fill, width=int(0.075 * fh + 2 * g))
+            d.ellipse([P(sx * 0.085, 0.03)[0] - 0.05 * fh - g, P(0, 0.05)[1] - g,
+                       P(sx * 0.085, 0.03)[0] + 0.05 * fh + g, P(0, 0)[1] + g], fill=fill)
+        torso = [P(-0.125, sy), P(0.125, sy), P(0.085, 0.45), P(-0.085, 0.45)]
+        cx = sum(p[0] for p in torso) / 4
+        cy = sum(p[1] for p in torso) / 4
+        grown = [(px + (g if px > cx else -g), py + (g if py > cy else -g)) for px, py in torso]
+        d.polygon(grown, fill=fill)
+        for side, (elbow, hand) in arms.items():
+            shoulder = P(-0.11 if side == "L" else 0.11, sy - 0.02)
+            pts = [shoulder, P(*elbow), P(*hand)]
+            d.line(pts, fill=fill, width=int(0.052 * fh + 2 * g), joint="curve")
+            for px, py in pts:
+                r = 0.026 * fh + g
+                d.ellipse([px - r, py - r, px + r, py + r], fill=fill)
+        hx, hy = P(*head)
+        r = 0.072 * fh + g
+        d.ellipse([hx - r, hy - r, hx + r, hy + r], fill=fill)
+
+    shape(dark, 0.012)
+    shape(body, 0)
+    # light from above
+    hx, hy = P(*head)
+    r = 0.072 * fh
+    d.ellipse([hx - r * 0.75, hy - r * 0.85, hx + r * 0.35, hy - r * 0.1], fill=light)
+    img = img.resize((w, h), Image.LANCZOS)
+    layer = np.asarray(img).astype(np.float64) / 255.0
+    layer[..., 3] *= min(1, item["alpha"])
+    canvas.blend(layer, x0, y0)
+
+
 def draw_button(canvas, item, kind):
     x0, y0, x1, y1 = canvas.box(item)
     w, h = int(x1 - x0), int(y1 - y0)
@@ -460,6 +548,11 @@ def main():
     name = "모험가" if locale == "koKR" else "Adventurer"
     lua.execute(f"""
         mock.units.player = {{ name = "{name}", guid = "Player-1-0001", class = "MAGE" }}
+        local party = {{ {{ ns.L.DEMO_TANK, "WARRIOR", "TANK" }}, {{ ns.L.DEMO_HEALER, "PRIEST", "HEALER" }},
+            {{ ns.L.DEMO_ROGUE, "ROGUE" }}, {{ ns.L.DEMO_HUNTER, "HUNTER" }} }}
+        for i, m in ipairs(party) do
+            mock.units["party" .. i] = {{ name = m[1], class = m[2], role = m[3], guid = "Player-1-000" .. (i + 1) }}
+        end
         mock.fire("ADDON_LOADED", "Podium")
         mock.fire("PLAYER_LOGIN")
         ns:ShowDemo()
@@ -480,6 +573,8 @@ def main():
             draw_text(canvas, item)
         elif kind in ("UIPanelButtonTemplate", "UIPanelCloseButton"):
             draw_button(canvas, item, kind)
+        elif kind == "Model":
+            draw_model(canvas, item)
     img = Image.fromarray((np.clip(canvas.img, 0, 1) * 255).astype(np.uint8), "RGB")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     img.save(out, optimize=True)

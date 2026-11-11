@@ -22,6 +22,7 @@ local DEFAULTS = {
     onLeave = true,
     everyBoss = false,
     raids = true,
+    models = true, -- players' characters with emotes on the podium
     dim = true,
     sound = true,
     fun = true,
