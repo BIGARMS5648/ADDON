@@ -189,6 +189,7 @@ local function draw(f)
         local item = items[#items]
         local p = f.parent.player
         item.class, item.animation, item.facing = p and p.class, f.animation, f.facing
+        item.fill = ns.Ceremony.MODEL_FILL
         item.alpha = item.alpha * (f.modelAlpha or 1)
     end
     local regions = {}
@@ -457,8 +458,11 @@ def draw_model(canvas, item):
     W, H = w * ss, h * ss
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    fh = 0.84 * H
-    base = H - 0.05 * H
+    # The addon sizes the frame so the character fills MODEL_FILL of its
+    # height with the rest split above and below (feet on the step top).
+    fill = item["fill"] or 0.8
+    fh = fill * H / 0.95  # the figure's head top is at 0.95
+    base = H - (1 - fill) / 2 * H
     pose = POSES.get(int(item["animation"] or 0), {})
     lean = pose.get("lean", 0)
 

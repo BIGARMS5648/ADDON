@@ -41,9 +41,14 @@ function InCombatLockdown() return mock.inCombat end
 function PlaySound(id) mock.sounds[#mock.sounds + 1] = id end
 SOUNDKIT = { MAP_PING = 3175, RAID_WARNING = 8959 }
 
+mock.tickers = {}
 C_Timer = {
     After = function(delay, fn)
         mock.timers[#mock.timers + 1] = fn
+    end,
+    NewTicker = function(interval, fn)
+        mock.tickers[#mock.tickers + 1] = fn
+        return { Cancel = function() end }
     end,
 }
 
@@ -101,7 +106,20 @@ local function newRegion(kind, parent)
     return r
 end
 
-function Region:SetParent(p) self.parent = p end
+function Region:SetParent(p)
+    local old = self.parent
+    if old and old.children then
+        for i, c in ipairs(old.children) do
+            if c == self then table.remove(old.children, i) break end
+        end
+    end
+    self.parent = p
+    if p and self.kind ~= "Texture" and self.kind ~= "FontString" then
+        p.children = p.children or {}
+        p.children[#p.children + 1] = self
+        self.frameLevel = (p.frameLevel or 1) + 1
+    end
+end
 function Region:GetParent() return self.parent end
 function Region:Show()
     local was = self.shown
@@ -440,6 +458,8 @@ function Region:SetUnit(unit)
         return false
     end
     self.unit = unit
+    self.modelFile = 1000 + #unit -- a snapshot: stays when the unit walks away
+    self.loads = (self.loads or 0) + 1
     return true
 end
 function Region:SetAnimation(anim)
@@ -458,7 +478,10 @@ function Region:SetModelAlpha(a)
     assert(a >= -1e-9 and a <= 1 + 1e-9, "bad model alpha")
     self.modelAlpha = a
 end
-function Region:ClearModel() self.unit, self.animation = nil, nil end
+function Region:ClearModel() self.unit, self.animation, self.modelFile = nil, nil, nil end
+function Region:GetModelFileID() return self.modelFile or 0 end
+function Region:SetKeepModelOnHide(v) self.keepModel = v end
+function Region:GetFrameStrata() return self.strata or (self.parent and self.parent.GetFrameStrata and self.parent:GetFrameStrata()) or "MEDIUM" end
 function Region:HasScript(name)
     if isModel(self) then
         return name == "OnAnimFinished" or name == "OnModelLoaded" or name == "OnUpdate" or name == "OnShow"
@@ -514,6 +537,14 @@ end
 mock.raid = false
 mock.instanceGroup = false
 function IsInRaid() return mock.raid end
+function GetNumGroupMembers()
+    if mock.raidSize then return mock.raidSize end
+    local n = 0
+    for _, u in ipairs({ "player", "party1", "party2", "party3", "party4" }) do
+        if mock.units[u] then n = n + 1 end
+    end
+    return n
+end
 function IsInGroup(category)
     if category == LE_PARTY_CATEGORY_INSTANCE then return mock.instanceGroup end
     return mock.units.party1 ~= nil or mock.raid

@@ -175,12 +175,16 @@ local function reset()
     mock.timers = {}
     mock.raid = false
     ns.lastReport = nil
+    mock.hidden, mock.noModel = {}, {}
+    mock.raidSize = nil
+    ns.Models:Forget()
     joinParty(true)
 end
 
 -- boot ----------------------------------------------------------------------------
 
 test("loads with defaults, options and slash commands", function()
+    PodiumDB = { everyBoss = true } -- saved by 1.0
     mock.fire("ADDON_LOADED", "Podium")
     mock.fire("PLAYER_LOGIN")
     mock.fire("PLAYER_ENTERING_WORLD", true, false)
@@ -188,7 +192,9 @@ test("loads with defaults, options and slash commands", function()
     assert(PodiumDB and PodiumDB.enabled, "db")
     eq(PodiumDB.autoClose, 60, "auto close default")
     assert(mock.registeredCategory, "settings category")
-    assert(mock.settings.PODIUM_everyBoss and mock.settings.PODIUM_scale, "settings registered")
+    assert(mock.settings.PODIUM_scale and mock.settings.PODIUM_onLeave, "settings registered")
+    eq(mock.settings.PODIUM_everyBoss, nil, "per-boss ceremony option removed")
+    eq(PodiumDB.everyBoss, nil, "old saved setting dropped")
     eq(mock.settings.PODIUM_autoClose.options.formatter(0), L.NEVER, "slider label")
     assert(SlashCmdList.PODIUM and SLASH_PODIUM1 == "/mvp", "slash")
     assert(printed(L.LOADED), "welcome message")
@@ -415,21 +421,16 @@ test("a fight right before zoning out still counts", function()
     eq(report().combatTime, 90 + 25, "both fights in the ceremony")
 end)
 
-test("every-boss option shows a ceremony per boss fight", function()
+test("no ceremony for bosses before the last one (old per-boss setting is gone)", function()
     reset()
-    PodiumDB.everyBoss = true
+    PodiumDB.everyBoss = true -- saved by 1.0; ignored now
     local inst = enter()
     journal(inst, { { "First", 701 }, { "Last", 702 } })
     pull("Trash", 30, typical())
     killBoss("First", 701, 64)
-    assert(shown(), "boss ceremony")
-    local rep = report()
-    eq(rep.tag, L.TAG_BOSS, "tag")
-    eq(rep.title, L.TITLE_BOSS:format("First"), "title")
-    eq(rep.combatTime, 64, "only the boss fight")
-    ns.Ceremony:Hide()
+    assert(not shown(), "nothing after the first boss")
     killBoss("Last", 702, 90)
-    eq(report().title, L.TITLE_CLEAR, "full ceremony at the end")
+    eq(report().title, L.TITLE_CLEAR, "ceremony at the end")
     eq(report().combatTime, 30 + 64 + 90, "whole run")
 end)
 
@@ -725,7 +726,7 @@ test("preview: reveal, skip and contents", function()
     assert(f.potg.text.text and f.potg.text.text ~= "", "POTG text")
     eq(f.header.title.text, L.TITLE_DEMO, "header")
     assert(#mock.sounds >= 2, "sounds")
-    assert(f.width <= 900 and f.height <= 620, "window fits a small screen")
+    assert(f.width <= 900 and f.height <= 700, "window fits a 768-high screen")
 end)
 
 test("preview when alone: stand-ins for the made-up party", function()
@@ -736,9 +737,10 @@ test("preview when alone: stand-ins for the made-up party", function()
     local shownModels, icons = 0, 0
     for _, slot in ipairs(frame().slots) do
         if slot.player then
-            if slot.model.shown then
+            if slot.model then
                 shownModels = shownModels + 1
                 eq(slot.model.unit, "player", "only your character")
+                eq(slot.icon.shown, false, "no icon")
             else
                 icons = icons + 1
                 eq(slot.icon.shown, true, "class icon")
@@ -809,26 +811,117 @@ test("emotes repeat after a short pause", function()
     eq(model.animation, ANIM.FLEX, "and around again")
 end)
 
-test("characters out of range or gone show their class icon", function()
+local function meetParty()
+    mock.fire("GROUP_ROSTER_UPDATE")
+    mock.flushTimers()
+end
+
+test("a party member far away still appears: kept from when they were near", function()
     reset()
-    mock.hidden.party2 = true
-    mock.noModel.party3 = true
+    meetParty() -- everyone near the dungeon entrance
+    local kept = ns.Models.cache[PARTY[3].guid]
+    assert(kept and kept.loaded, "character kept")
+    eq(kept.model.shown, false, "kept off screen, hidden")
+    eq(kept.model.keepModel, true, "kept while hidden")
+    local loads = kept.model.loads
+    mock.hidden.party2 = true -- walked away before the ceremony
     ns:ShowDemo()
     ns.Ceremony:Skip()
-    local hidden, broken = slotFor(PARTY[3].name), slotFor(PARTY[4].name)
-    eq(hidden.model.shown, false, "too far: no model")
-    eq(hidden.icon.shown, true, "icon instead")
-    eq(broken.model.shown, false, "model failed")
-    eq(broken.icon.shown, true, "icon instead")
-    eq(slotFor(PARTY[2].name).model.shown, true, "others still shown")
-    mock.hidden, mock.noModel = {}, {}
-    -- an old ceremony after the group broke up
+    local slot = slotFor(PARTY[3].name)
+    eq(slot.model, kept.model, "the kept character")
+    eq(slot.model.shown, true, "on the podium")
+    eq(slot.model.parent, slot, "moved onto the step")
+    eq(slot.icon.shown, false, "no icon")
+    eq(kept.model.loads, loads, "not loaded again (can't be, too far)")
+    assert(slot.model.animation and slot.model.animation ~= ANIM.STAND, "emoting")
+    -- nearby players are loaded fresh
+    assert(slotFor(PARTY[2].name).model.loads > 1, "near: loaded again")
     ns.Ceremony:Hide()
-    eq(frame().slots[1].model.unit, nil, "models released on close")
-    solo()
+    eq(kept.model.shown, false, "back off the podium")
+    eq(kept.inUse, false, "free again")
+    assert(kept.model.unit, "still kept for next time")
+end)
+
+test("never seen nearby, or the game can't show them: class icon", function()
+    reset()
+    mock.hidden.party2 = true -- far away the whole time
+    mock.noModel.party4 = true -- near, but the game can't show the character
+    meetParty()
+    eq(ns.Models.cache[PARTY[3].guid], nil, "nothing to keep")
     ns:ShowDemo()
     ns.Ceremony:Skip()
-    eq(slotFor(PARTY[2].name), nil, "party gone from the preview")
+    local never = slotFor(PARTY[3].name)
+    eq(never.model, nil, "no character")
+    eq(never.icon.shown, true, "icon instead")
+    eq(slotFor(PARTY[5].name).model, nil, "model failed")
+    eq(slotFor(PARTY[5].name).icon.shown, true, "icon instead")
+    eq(slotFor(PARTY[2].name).icon.shown, false, "others still shown")
+end)
+
+test("a kept character the game dropped isn't used", function()
+    reset()
+    meetParty()
+    local entry = ns.Models.cache[PARTY[4].guid]
+    entry.model.modelFile = nil -- model gone
+    entry.time = entry.time - 10
+    mock.hidden.party3 = true
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    eq(slotFor(PARTY[4].name).model, nil, "not used")
+    eq(slotFor(PARTY[4].name).icon.shown, true, "icon")
+end)
+
+test("characters aren't kept in combat or in big raids", function()
+    reset()
+    mock.inCombat = true
+    meetParty()
+    eq(next(ns.Models.cache), nil, "nothing kept in combat")
+    mock.inCombat = false
+    mock.raid, mock.raidSize = true, 25
+    for i = 1, 3 do
+        mock.units["raid" .. i] = { name = "R" .. i, guid = "Player-1-09" .. i, class = "MAGE" }
+    end
+    meetParty()
+    eq(next(ns.Models.cache), nil, "25-player raid: not kept")
+    mock.raidSize = 8
+    ns.Models:Forget()
+    meetParty()
+    assert(ns.Models.cache["Player-1-091"], "small raid: kept")
+    for i = 1, 3 do
+        mock.units["raid" .. i] = nil
+    end
+end)
+
+test("characters stand on their step, bigger, adjustable", function()
+    reset()
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local STEPS, FILL = ns.Ceremony.STEPS, ns.Ceremony.MODEL_FILL
+    for _, slot in ipairs(frame().slots) do
+        local model = slot.model
+        if model then
+            local point = model.points[1]
+            eq(point[1], "BOTTOM", "anchored at the bottom")
+            local feet = point[5] + model.height * (1 - FILL) / 2
+            assert(math.abs(feet - STEPS[slot.rank].step) < 0.01, "feet on the step top")
+            assert(point[5] < STEPS[slot.rank].step, "frame sunk into the step")
+            assert(math.abs(model.height * FILL - STEPS[slot.rank].height) < 0.01, "full size")
+        end
+    end
+    assert(STEPS[1].height >= 250 and STEPS[2].height >= 220, "bigger than 1.1 (205 / 180 frame)")
+    ns.Ceremony:Hide()
+    PodiumDB.modelSize, PodiumDB.modelOffset = 120, 10
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    local side = frame().slots[2].model
+    assert(math.abs(side.height * FILL - STEPS[2].height * 1.2) < 0.01, "120%")
+    local feet = side.points[1][5] + side.height * (1 - FILL) / 2
+    assert(math.abs(feet - (STEPS[2].step + 10)) < 0.01, "moved up 10")
+    local mvp = frame().slots[1]
+    local top = mvp.geometry.feet + mvp.geometry.height
+    assert(top <= 500 - 92 - 6, "MVP stays below the header")
+    assert(mock.settings.PODIUM_modelSize and mock.settings.PODIUM_modelOffset, "settings")
+    eq(mock.settings.PODIUM_modelOffset.options.formatter(-6), "-6", "label")
 end)
 
 test("characters can be turned off", function()
@@ -838,10 +931,12 @@ test("characters can be turned off", function()
     ns.Ceremony:Skip()
     for _, slot in ipairs(frame().slots) do
         if slot.player then
-            eq(slot.model.shown, false, "no model")
+            eq(slot.model, nil, "no model")
             eq(slot.icon.shown, true, "icon")
         end
     end
+    meetParty()
+    eq(next(ns.Models.cache), nil, "nothing kept while off")
     assert(mock.settings.PODIUM_models, "option in the settings")
 end)
 

@@ -71,15 +71,6 @@ local function Index(value, total, weight, weightSum)
     return min(3, (value / total) / (weight / weightSum))
 end
 
-local function FightKeys(run, request)
-    if request.kind == "boss" then
-        local boss = run.bosses[request.boss or #run.bosses]
-        local fkey = boss and boss.fkey or run.order[#run.order]
-        return { fkey }
-    end
-    return run.order
-end
-
 -- Adds up every fight per player.
 local function Aggregate(run, keys)
     local players, list = {}, {}
@@ -399,15 +390,11 @@ function Awards.Categories(list, totals, fun)
     return awards
 end
 
-local function Header(run, request, keys, combatTime)
+local function Header(run, request)
     local tag, title
     local kind = request.kind
     if kind == "demo" then
         tag, title = L.TAG_DEMO, L.TITLE_DEMO
-    elseif kind == "boss" then
-        local fight = run.fights[keys[1]]
-        local boss = run.bosses[request.boss or #run.bosses]
-        tag, title = L.TAG_BOSS, L.TITLE_BOSS:format((boss and boss.name) or (fight and (fight.boss or fight.name)) or "?")
     elseif kind == "partial" then
         tag, title = L.TAG_RUN, L.TITLE_PARTIAL
     elseif run.complete == "leave" then
@@ -417,22 +404,17 @@ local function Header(run, request, keys, combatTime)
     else
         tag, title = L.TAG_CLEAR, L.TITLE_CLEAR
     end
-    local length
-    if kind == "boss" then
-        length = combatTime
-    else
-        length = (run.ended or run.leftAt or time()) - (run.started or time())
-    end
+    local length = (run.ended or run.leftAt or time()) - (run.started or time())
     return tag, title, length
 end
 
-local function SubtitleParts(run, request, length, totals)
+local function SubtitleParts(run, length, totals)
     local parts = { run.instance or L.UNKNOWN }
     if run.difficulty and run.difficulty ~= "" then
         parts[1] = parts[1] .. " (" .. run.difficulty .. ")"
     end
     parts[#parts + 1] = L.SUB_TIME:format(ns.FormatTime(length))
-    if request.kind ~= "boss" and #run.bosses > 0 then
+    if #run.bosses > 0 then
         parts[#parts + 1] = L.SUB_BOSSES:format(#run.bosses)
     end
     if totals.deaths == 0 then
@@ -469,12 +451,11 @@ local function ShareLines(report)
     return lines
 end
 
--- request.kind: "clear" (whole run), "partial" (run so far), "boss" (one
--- boss fight, request.boss = index into run.bosses) or "demo".
+-- request.kind: "clear" (whole run), "partial" (run so far) or "demo".
 -- Returns nil when the run has no player data.
 function Awards.Build(run, request)
     request = request or { kind = "clear" }
-    local keys = FightKeys(run, request)
+    local keys = run.order
     local players, list, combatTime = Aggregate(run, keys)
     if #list == 0 then
         return nil
@@ -482,7 +463,7 @@ function Awards.Build(run, request)
     local totals = Totals(list)
     Awards.GuessRoles(list, totals)
     Awards.Score(list, totals)
-    local tag, title, length = Header(run, request, keys, combatTime)
+    local tag, title, length = Header(run, request)
     local report = {
         kind = request.kind,
         tag = tag,
@@ -498,7 +479,7 @@ function Awards.Build(run, request)
         awards = Awards.Categories(list, totals, not ns.db or ns.db.fun),
         time = run.ended or time(),
     }
-    report.subtitleParts = SubtitleParts(run, request, length, totals)
+    report.subtitleParts = SubtitleParts(run, length, totals)
     report.subtitle = table.concat(report.subtitleParts, "  ·  ")
     report.shareLines = ShareLines(report)
     return report

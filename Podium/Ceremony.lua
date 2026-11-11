@@ -11,9 +11,11 @@ local L = ns.L
 --            rest applaud, the joke-award winners cry or do the chicken)
 --   bottom:  Play of the Game card
 --
--- Characters are the players' real 3D models (DressUpModel:SetUnit), so
--- they need to be in the group and nearby; anyone who isn't (or a ceremony
--- from the history) gets their class icon on the step instead.
+-- Characters are the players' real 3D models (DressUpModel:SetUnit). The
+-- game only has a player's appearance while they're nearby, so Models.lua
+-- keeps each group member's character from when they last were; anyone
+-- never seen nearby (or a ceremony from the history after a /reload) gets
+-- their class icon on the step instead.
 --
 -- Revealed in order like an end-of-match screen: title, play of the game,
 -- the lineup from the outside in, then the MVP with light rays. Click to
@@ -27,22 +29,32 @@ local MEDIA = "Interface\\AddOns\\" .. ADDON .. "\\Media\\"
 local CLASS_ICONS = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
 local QUESTION_MARK = "Interface\\Icons\\INV_Misc_QuestionMark"
 
-local WIDTH, HEIGHT = 880, 600
+local WIDTH, HEIGHT = 880, 680
 local GOLD = { 1, 0.82, 0.25 }
 local ORANGE = { 1, 0.55, 0.15 }
-local STAGE_TOP, STAGE_BOTTOM = 92, 424 -- from the top of the window
+local STAGE_TOP, STAGE_BOTTOM = 92, 500 -- from the top of the window
 local SLOT_GAP = 12
 local MAX_SLOTS = 5
-local POTG_W, POTG_H, POTG_TOP = 848, 104, 436
+local POTG_W, POTG_H, POTG_TOP = 848, 104, 512
 
--- Podium steps by rank: width, step height, model height, step color.
+-- Podium steps by rank: width, step height, how tall the character stands
+-- (at 100% size), step color.
 local STEPS = {
-    { w = 200, step = 74, model = 205, color = { 0.85, 0.62, 0.14 } }, -- gold
-    { w = 150, step = 58, model = 180, color = { 0.62, 0.66, 0.74 } }, -- silver
-    { w = 150, step = 48, model = 180, color = { 0.66, 0.4, 0.18 } }, -- bronze
-    { w = 150, step = 40, model = 176, color = { 0.24, 0.24, 0.3 } },
-    { w = 150, step = 40, model = 176, color = { 0.24, 0.24, 0.3 } },
+    { w = 200, step = 106, height = 255, color = { 0.85, 0.62, 0.14 } }, -- gold
+    { w = 150, step = 64, height = 232, color = { 0.62, 0.66, 0.74 } }, -- silver
+    { w = 150, step = 54, height = 232, color = { 0.66, 0.4, 0.18 } }, -- bronze
+    { w = 150, step = 44, height = 226, color = { 0.24, 0.24, 0.3 } },
+    { w = 150, step = 44, height = 226, color = { 0.24, 0.24, 0.3 } },
 }
+-- The game fits a character into its model frame with a little space
+-- around it (about 90% of the height at camera distance 1). Moving the
+-- camera back to CAMERA_DISTANCE leaves the character MODEL_FILL of the
+-- frame's height, the rest split above and below: room above the head for
+-- raised arms (a model is cut off at its frame's edge), and room below that
+-- is sunk into the step so the feet land on its top. If that guess is off
+-- in game, the "character height" option moves them.
+local CAMERA_DISTANCE = 1.35
+local MODEL_FILL = 0.67
 -- Left to right: 4th, 2nd, MVP, 3rd, 5th.
 local STAGE_ORDER = { 4, 2, 1, 3, 5 }
 
@@ -66,6 +78,7 @@ local EMOTES = {
     NONE = { ANIM.APPLAUD },
 }
 Ceremony.ANIM, Ceremony.EMOTES = ANIM, EMOTES
+Ceremony.STEPS, Ceremony.MODEL_FILL = STEPS, MODEL_FILL
 
 local ROLE_ATLAS = {
     TANK = "UI-LFG-RoleIcon-Tank",
@@ -273,66 +286,37 @@ end
 -- Characters
 --------------------------------------------------------------------------
 
-local function Units()
-    local units = { "player" }
-    if IsInRaid() then
-        for i = 1, 40 do
-            units[#units + 1] = "raid" .. i
-        end
-    else
-        for i = 1, 4 do
-            units[#units + 1] = "party" .. i
-        end
-    end
-    return units
+-- Where a slot's character stands, from the size and height settings.
+local function Geometry(slot)
+    local step = STEPS[slot.rank]
+    local db = ns.db or {}
+    local size = (db.modelSize or 100) / 100
+    -- the MVP must stay below the header
+    local room = (STAGE_BOTTOM - STAGE_TOP) - step.step - (slot.rank == 1 and 6 or 40)
+    local height = min(step.height * size, room)
+    local frameHeight = height / MODEL_FILL
+    local sink = frameHeight * (1 - MODEL_FILL) / 2
+    return {
+        feet = step.step, -- from the bottom of the slot
+        height = height,
+        frameHeight = frameHeight,
+        frameWidth = max(step.w + 40, frameHeight * 0.75),
+        bottom = step.step - sink + (db.modelOffset or 0),
+    }
 end
+Ceremony.Geometry = Geometry
 
--- The unit token of a player in the report, if they're still in the group.
-function Ceremony.FindUnit(p)
-    for _, unit in ipairs(Units()) do
-        if ns.Safe(UnitExists(unit)) then
-            local guid = ns.Safe(UnitGUID(unit))
-            if guid and guid == p.key then
-                return unit
-            end
-            local name, realm = UnitName(unit)
-            name, realm = ns.Safe(name), ns.Safe(realm)
-            if name and (p.name == name or (realm and realm ~= "" and p.name == name .. "-" .. realm)) then
-                return unit
-            end
-        end
+local function PlaceRegions(slot)
+    local g = Geometry(slot)
+    slot.geometry = g
+    slot.beam:SetSize(STEPS[slot.rank].w * 1.15, g.height * 1.25)
+    slot.ring:ClearAllPoints()
+    slot.ring:SetPoint("CENTER", slot, "BOTTOM", 0, g.feet + g.height * 0.45)
+    if slot.badge and slot.rank ~= 1 then
+        -- above the head, high enough for raised arms
+        slot.extra:ClearAllPoints()
+        slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, g.feet + g.height * 1.12)
     end
-    if p.isLocal then
-        return "player"
-    end
-end
-
--- Shows the player's own character; false if the game can't (gone, too far).
-local function LoadModel(slot, p)
-    local model = slot.model
-    slot.unit = Ceremony.FindUnit(p)
-    if not slot.unit or (ns.db and ns.db.models == false) then
-        return false
-    end
-    if UnitIsVisible then
-        local ok, visible = pcall(UnitIsVisible, slot.unit)
-        if ok and ns.Safe(visible) == false then
-            return false
-        end
-    end
-    local ok, success = pcall(model.SetUnit, model, slot.unit)
-    if not ok or success == false then
-        return false
-    end
-    pcall(model.SetPortraitZoom, model, 0)
-    pcall(model.SetCamDistanceScale, model, 1.12)
-    pcall(model.SetPosition, model, 0, 0, 0)
-    pcall(model.SetFacing, model, slot.facing or 0)
-    if model.SetSheathed then
-        pcall(model.SetSheathed, model, true) -- empty hands look better while emoting
-    end
-    pcall(model.SetAnimation, model, ANIM.STAND)
-    return true
 end
 
 local function PlayEmote(slot)
@@ -354,14 +338,70 @@ end
 
 -- Emote finished: stand for a moment, then the next one.
 local function OnAnimFinished(model)
-    local slot = model:GetParent()
-    if not slot.playing then
+    local slot = model.slot
+    if not (slot and slot.playing) then
         return
     end
     slot.playing = false
     pcall(model.SetAnimation, model, ANIM.STAND)
     slot.animation = ANIM.STAND
     slot.nextEmote = clock + 1.2 + (slot.position * 0.37) % 1.3
+end
+
+-- Emotes asked for before the model finished loading are lost.
+local function OnModelLoaded(model)
+    local slot = model.slot
+    if slot and slot.playing then
+        pcall(model.SetAnimation, model, slot.animation)
+    end
+end
+
+-- Puts the player's character (loaded now or kept from earlier) on the step.
+local function BorrowCharacter(slot, p)
+    local entry = ns.Models:Get(p)
+    if not entry then
+        return false
+    end
+    local model = entry.model
+    entry.inUse = true
+    slot.entry, slot.model = entry, model
+    model.slot = slot
+    model:SetParent(slot)
+    if model.SetFrameStrata then
+        model:SetFrameStrata(slot:GetFrameStrata())
+    end
+    model:SetFrameLevel(slot:GetFrameLevel() + 2)
+    local g = slot.geometry
+    model:ClearAllPoints()
+    model:SetSize(g.frameWidth, g.frameHeight)
+    model:SetPoint("BOTTOM", slot, "BOTTOM", 0, g.bottom)
+    slot.hasFinishScript = model.HasScript and model:HasScript("OnAnimFinished") or false
+    if slot.hasFinishScript then
+        model:SetScript("OnAnimFinished", OnAnimFinished)
+    end
+    if model.HasScript and model:HasScript("OnModelLoaded") then
+        model:SetScript("OnModelLoaded", OnModelLoaded)
+    end
+    model:Show()
+    pcall(model.SetPortraitZoom, model, 0)
+    pcall(model.SetCamDistanceScale, model, CAMERA_DISTANCE)
+    pcall(model.SetPosition, model, 0, 0, 0)
+    pcall(model.SetFacing, model, 0)
+    if model.SetSheathed then
+        pcall(model.SetSheathed, model, true) -- empty hands look better while emoting
+    end
+    pcall(model.SetAnimation, model, ANIM.STAND)
+    return true
+end
+
+local function ReleaseCharacters()
+    for _, slot in ipairs(frame and frame.slots or {}) do
+        if slot.entry then
+            ns.Models:Release(slot.entry)
+        end
+        slot.entry, slot.model = nil, nil
+        slot.playing, slot.nextEmote = false, nil
+    end
 end
 
 --------------------------------------------------------------------------
@@ -410,7 +450,7 @@ local function CreateSlot(parent, rank)
 
     -- light cone from above and a pool of light at the feet
     slot.beam = Tex(slot, "BACKGROUND", 1, "glow")
-    slot.beam:SetSize(step.w * (mvp and 1.15 or 1), step.model * 1.15)
+    slot.beam:SetSize(step.w * 1.15, step.height * 1.25)
     slot.beam:SetPoint("BOTTOM", 0, step.step - 10)
     slot.beam:SetAlpha(mvp and 0.35 or 0.16)
     slot.pool = Tex(slot, "BACKGROUND", 2, "glow")
@@ -428,56 +468,46 @@ local function CreateSlot(parent, rank)
     slot.blockTop:SetPoint("BOTTOMRIGHT", slot.block, "TOPRIGHT", 0, -4)
     slot.blockTop:SetHeight(4)
 
-    -- the character
-    slot.model = CreateFrame("DressUpModel", nil, slot)
-    slot.model:SetSize(step.w, step.model)
-    slot.model:SetPoint("BOTTOM", 0, step.step - 4)
-    slot.hasFinishScript = slot.model.HasScript and slot.model:HasScript("OnAnimFinished") or false
-    if slot.hasFinishScript then
-        slot.model:SetScript("OnAnimFinished", OnAnimFinished)
-    end
-    if slot.model.HasScript and slot.model:HasScript("OnModelLoaded") then
-        -- emotes asked for before the model finished loading are lost
-        slot.model:SetScript("OnModelLoaded", function(model)
-            local s = model:GetParent()
-            if s.playing then
-                pcall(model.SetAnimation, model, s.animation)
-            end
-        end)
-    end
-    -- stand-in when the character can't be shown
+    -- stand-in when the character can't be shown (the character itself is
+    -- borrowed from ns.Models when the ceremony opens)
     slot.ring = Tex(slot, "ARTWORK", 0, "ring", mvp and 104 or 84)
-    slot.ring:SetPoint("CENTER", slot.model, "CENTER", 0, -10)
+    slot.ring:SetPoint("CENTER", slot, "BOTTOM", 0, step.step + step.height * 0.45)
     slot.icon = slot:CreateTexture(nil, "ARTWORK", nil, 1)
     slot.icon:SetSize(mvp and 70 or 56, mvp and 70 or 56)
     slot.icon:SetPoint("CENTER", slot.ring, "CENTER")
 
-    -- name and score on the front of the step
+    -- the front of the step: (MVP) name, score
+    local top = -7
+    if mvp then
+        slot.badge = Text(slot, 26, { 1, 0.95, 0.75 }, "OUTLINE")
+        slot.badge:SetPoint("TOP", slot.block, "TOP", 0, -8)
+        slot.laurelL = Tex(slot, "ARTWORK", 2, "star", 26)
+        slot.laurelL:SetPoint("RIGHT", slot.badge, "LEFT", -4, 0)
+        slot.laurelL:SetVertexColor(1, 0.95, 0.7)
+        slot.laurelR = Tex(slot, "ARTWORK", 2, "star", 26)
+        slot.laurelR:SetPoint("LEFT", slot.badge, "RIGHT", 4, 0)
+        slot.laurelR:SetVertexColor(1, 0.95, 0.7)
+        top = -38
+    end
     slot.name = Text(slot, mvp and 16 or 13, GOLD, "OUTLINE")
-    slot.name:SetPoint("TOP", slot.block, "TOP", 0, mvp and -14 or -7)
+    slot.name:SetPoint("TOP", slot.block, "TOP", 0, top)
     slot.name:SetWidth(step.w - 18)
     slot.name:SetWordWrap(false)
     slot.roleIcon = slot:CreateTexture(nil, "OVERLAY")
-    slot.roleIcon:SetSize(mvp and 16 or 13, mvp and 16 or 13)
-    slot.score = Text(slot, mvp and 13 or 10, { 1, 1, 1 })
-    slot.score:SetPoint("TOP", slot.name, "BOTTOM", 7, mvp and -6 or -3)
+    slot.roleIcon:SetSize(mvp and 15 or 13, mvp and 15 or 13)
+    slot.score = Text(slot, mvp and 12 or 10, { 1, 1, 1 })
+    slot.score:SetPoint("TOP", slot.name, "BOTTOM", 7, mvp and -4 or -3)
     slot.roleIcon:SetPoint("RIGHT", slot.score, "LEFT", -3, 0)
 
-    -- titles above the head
-    slot.extra = Text(slot, 10, { 0.85, 0.75, 0.5 })
-    slot.extra:SetPoint("BOTTOM", slot.model, "TOP", 0, 2)
-    slot.extra:SetWidth(step.w - 6)
+    -- other titles: on the MVP's step, above everyone else's head
+    slot.extra = Text(slot, mvp and 11 or 10, mvp and { 0.24, 0.13, 0 } or { 0.85, 0.75, 0.5 })
+    slot.extra:SetWidth(step.w - 10)
     slot.extra:SetWordWrap(false)
     if mvp then
-        slot.badge = Text(slot, 32, GOLD, "OUTLINE")
-        slot.badge:SetPoint("BOTTOM", slot.extra, "TOP", 0, 0)
-        slot.laurelL = Tex(slot, "ARTWORK", 2, "star", 30)
-        slot.laurelL:SetPoint("RIGHT", slot.badge, "LEFT", -4, 0)
-        slot.laurelL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
-        slot.laurelR = Tex(slot, "ARTWORK", 2, "star", 30)
-        slot.laurelR:SetPoint("LEFT", slot.badge, "RIGHT", 4, 0)
-        slot.laurelR:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
+        slot.extra:SetShadowColor(1, 0.9, 0.5, 0.35) -- dark text on gold
+        slot.extra:SetPoint("TOP", slot.score, "BOTTOM", -7, -6)
     else
+        slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, step.step + step.height * 1.12)
         slot.badge = Text(slot, 13, GOLD, "OUTLINE")
         slot.badge:SetPoint("BOTTOM", slot.extra, "TOP", 8, 1)
         slot.badge:SetWordWrap(false)
@@ -599,12 +629,7 @@ function Ceremony:Create()
     end)
     frame:SetScript("OnHide", function()
         HideTooltip()
-        for _, slot in ipairs(frame.slots or {}) do -- (also runs once while being created)
-            if slot.model.ClearModel then
-                pcall(slot.model.ClearModel, slot.model)
-            end
-            slot.playing, slot.nextEmote = false, nil
-        end
+        ReleaseCharacters() -- (also runs once while being created)
     end)
     frame:Hide()
     -- Esc closes it.
@@ -648,7 +673,7 @@ function Ceremony:Create()
 
     -- Light rays behind the MVP (drawn under the characters).
     frame.rays = Tex(frame, "ARTWORK", 0, "rays", 480)
-    frame.rays:SetPoint("CENTER", frame, "TOP", 0, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].model / 2))
+    frame.rays:SetPoint("CENTER", frame, "TOP", 0, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].height / 2))
     frame.rays:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
 
     frame.header = CreateHeader(frame)
@@ -815,11 +840,11 @@ local function FillSlot(slot, p, titles)
     -- the character
     slot.emotes, slot.emoteIndex = EmotesFor(titles), 0
     slot.playing, slot.nextEmote, slot.animation = false, nil, nil
-    slot.hasModel = LoadModel(slot, p)
-    slot.model:SetShown(slot.hasModel)
-    slot.icon:SetShown(not slot.hasModel)
-    slot.ring:SetShown(not slot.hasModel)
-    if not slot.hasModel then
+    PlaceRegions(slot)
+    local hasModel = BorrowCharacter(slot, p)
+    slot.icon:SetShown(not hasModel)
+    slot.ring:SetShown(not hasModel)
+    if not hasModel then
         SetClassIcon(slot.icon, p.class)
         slot.ring:SetVertexColor(r, g, b)
     end
@@ -864,12 +889,12 @@ local function FillStage(report)
     -- turn slightly toward the middle
     for _, slot in ipairs(used) do
         slot.facing = slot.baseX < mvpX and 0.35 or (slot.baseX > mvpX and -0.35 or 0)
-        if slot.hasModel then
+        if slot.model then
             pcall(slot.model.SetFacing, slot.model, slot.facing)
         end
     end
     frame.rays:ClearAllPoints()
-    frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].model / 2))
+    frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - frame.slots[1].geometry.height / 2))
     local hidden = #report.players - #used
     frame.more:SetText(hidden > 0 and L.MORE_PLAYERS:format(hidden) or "")
     -- reveal from the outside in, MVP last
@@ -893,7 +918,7 @@ end
 
 local function SetSlotAlpha(slot, alpha)
     slot:SetAlpha(alpha)
-    if slot.hasModel and slot.model.SetModelAlpha then
+    if slot.model and slot.model.SetModelAlpha then
         pcall(slot.model.SetModelAlpha, slot.model, alpha)
     end
 end
@@ -914,7 +939,7 @@ local function Apply(element, p)
     else
         element.frame:SetAlpha(alpha)
     end
-    if p >= 1 and element.slot and element.frame.hasModel and not element.frame.playing
+    if p >= 1 and element.slot and element.frame.model and not element.frame.playing
         and not element.frame.nextEmote then
         PlayEmote(element.frame)
     end
@@ -967,7 +992,7 @@ function Ceremony:OnUpdate(elapsed)
     end
     -- Emotes: the next one after a short pause.
     for _, slot in ipairs(frame.slots) do
-        if slot.player and slot.hasModel and slot.nextEmote and clock >= slot.nextEmote then
+        if slot.player and slot.model and slot.nextEmote and clock >= slot.nextEmote then
             PlayEmote(slot)
         end
     end
@@ -1034,6 +1059,7 @@ function Ceremony:Show(report)
     frame.dim:SetShown(db.dim ~= false)
     closeIn = (db.autoClose or 0) > 0 and db.autoClose or nil
 
+    ReleaseCharacters() -- a ceremony that was still open
     frame:Show() -- models load only while shown
     local slots = FillStage(report)
     BuildTimeline(slots)

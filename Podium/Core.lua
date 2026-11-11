@@ -20,9 +20,10 @@ local L, Meter, Safe = ns.L, ns.Meter, ns.Safe
 local DEFAULTS = {
     enabled = true,
     onLeave = true,
-    everyBoss = false,
     raids = true,
     models = true, -- players' characters with emotes on the podium
+    modelSize = 100, -- %
+    modelOffset = 0, -- move the characters up (+) or down (-) on their step
     dim = true,
     sound = true,
     fun = true,
@@ -473,8 +474,6 @@ function ns:OnBossKilled(id, name)
     Debug("boss killed:", tostring(name), tostring(id), final and "(last boss)" or "")
     if final then
         self:Complete(run, "final")
-    elseif db.enabled and db.everyBoss then
-        self:QueueCeremony({ kind = "boss", boss = #run.bosses })
     end
     self:RequestHarvest(1)
 end
@@ -509,10 +508,6 @@ end
 --------------------------------------------------------------------------
 
 function ns:QueueCeremony(request)
-    -- A whole-run ceremony replaces a waiting boss ceremony, not the other way round.
-    if queued and queued.kind ~= "boss" and request.kind == "boss" then
-        return
-    end
     queued = request
     retries = 0
     self:ScheduleQueued(SHOW_DELAY)
@@ -565,7 +560,7 @@ function ns:ShowRun(run, request)
         return
     end
     self.lastReport = report
-    if request.kind ~= "boss" and request.kind ~= "demo" then
+    if request.kind ~= "demo" then
         run.shown = true
     end
     if ns.Ceremony then
@@ -621,6 +616,7 @@ function ns:ADDON_LOADED(name)
     if type(db.history) ~= "table" then
         db.history = {}
     end
+    db.everyBoss = nil -- removed option (1.2)
     ns.db = db
 
     Register("PLAYER_LOGIN")
