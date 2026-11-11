@@ -37,14 +37,15 @@ local SLOT_GAP = 12
 local MAX_SLOTS = 5
 local POTG_W, POTG_H, POTG_TOP = 848, 104, 512
 
--- Podium steps by rank: width, step height, how tall the character stands
--- (at 100% size), step color.
+-- Podium steps by rank: width, height of the step (to the middle of its top
+-- face, where the feet are), how tall the character stands (at 100% size),
+-- metal color.
 local STEPS = {
-    { w = 200, step = 106, height = 340, color = { 0.85, 0.62, 0.14 } }, -- gold (the MVP stands out)
-    { w = 150, step = 64, height = 232, color = { 0.62, 0.66, 0.74 } }, -- silver
-    { w = 150, step = 54, height = 232, color = { 0.66, 0.4, 0.18 } }, -- bronze
-    { w = 150, step = 44, height = 226, color = { 0.24, 0.24, 0.3 } },
-    { w = 150, step = 44, height = 226, color = { 0.24, 0.24, 0.3 } },
+    { w = 200, step = 106, height = 340, color = { 1, 0.8, 0.36 } }, -- gold (the MVP stands out)
+    { w = 150, step = 72, height = 232, color = { 0.84, 0.88, 0.96 } }, -- silver
+    { w = 150, step = 62, height = 232, color = { 0.92, 0.6, 0.34 } }, -- bronze
+    { w = 150, step = 52, height = 226, color = { 0.5, 0.53, 0.62 } }, -- steel
+    { w = 150, step = 52, height = 226, color = { 0.5, 0.53, 0.62 } },
 }
 -- The game fits a character into its model frame with a little space
 -- around it (about 90% of the height at camera distance 1). Moving the
@@ -55,10 +56,14 @@ local STEPS = {
 -- in game, the "character height" option moves them.
 local CAMERA_DISTANCE = 1.35
 local MODEL_FILL = 0.67
--- Measured in game (1.2.1 looked right with the characters moved down 40):
--- the empty space under the feet is about this share of the frame's height,
--- more than MODEL_FILL suggests. The frame is sunk into the step by that much.
-local FEET_MARGIN = 0.28
+-- Measured in game (characters looked right moved down 40 in 1.2.1, then
+-- up 6 in 1.2.2): the empty space under the feet is about this share of the
+-- frame's height, more than MODEL_FILL suggests. The frame is sunk into the
+-- step by that much.
+local FEET_MARGIN = 0.263
+-- The top face of a step is seen from a little above: this deep, with the
+-- feet in its middle.
+local TOP_DEPTH = 16
 -- Left to right: 4th, 2nd, MVP, 3rd, 5th.
 local STAGE_ORDER = { 4, 2, 1, 3, 5 }
 
@@ -217,6 +222,13 @@ local function Tex(parent, layer, sublevel, file, size)
     return t
 end
 
+-- A media texture drawn normally (not as light).
+local function Img(parent, layer, sublevel, file)
+    local t = parent:CreateTexture(nil, layer, nil, sublevel)
+    t:SetTexture(MEDIA .. file)
+    return t
+end
+
 local function Solid(parent, layer, sublevel, r, g, b, a)
     local t = parent:CreateTexture(nil, layer, nil, sublevel)
     t:SetColorTexture(r, g, b, a)
@@ -322,9 +334,11 @@ local function PlaceRegions(slot)
     slot.beam:SetSize(STEPS[slot.rank].w * 1.15, g.height * 1.25)
     slot.ring:ClearAllPoints()
     slot.ring:SetPoint("CENTER", slot, "BOTTOM", 0, g.feet + g.visible * 0.55)
-    if slot.badge and slot.rank ~= 1 then
-        -- above the head, high enough for raised arms
-        slot.extra:ClearAllPoints()
+    -- above the head, high enough for raised arms
+    slot.extra:ClearAllPoints()
+    if slot.rank == 1 then
+        slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, g.feet + g.visible * 1.1)
+    else
         slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, g.feet + g.height * 1.12)
     end
 end
@@ -416,6 +430,106 @@ local function ReleaseCharacters()
 end
 
 --------------------------------------------------------------------------
+-- Spotlights and confetti
+--------------------------------------------------------------------------
+
+local SPOT_SIZE = 640
+local CONFETTI_COUNT = 44
+local CONFETTI_COLORS = {
+    { 1, 0.82, 0.25 }, { 1, 1, 1 }, { 1, 0.45, 0.2 }, { 0.45, 0.8, 1 }, { 1, 0.5, 0.78 }, { 0.55, 1, 0.5 },
+}
+
+-- Points a spotlight from its lamp (x, y from the window's top middle)
+-- along angle (counterclockwise from straight down).
+local function AimSpot(spot, angle)
+    local s, c = math.sin(angle), math.cos(angle)
+    spot:SetRotation(angle)
+    spot:ClearAllPoints()
+    -- the beam runs from the texture's top middle through its center
+    spot:SetPoint("CENTER", frame, "TOP", spot.lampX + SPOT_SIZE / 2 * s, spot.lampY - SPOT_SIZE / 2 * c)
+end
+
+local function CreateConfetti(parent)
+    local layer = CreateFrame("Frame", nil, parent)
+    layer:SetAllPoints()
+    layer:SetFrameLevel(parent:GetFrameLevel() + 40) -- in front of the characters
+    layer.pieces = {}
+    for i = 1, CONFETTI_COUNT do
+        local tex = layer:CreateTexture(nil, "OVERLAY")
+        tex:SetTexture(MEDIA .. "confetti")
+        tex:Hide()
+        layer.pieces[i] = { tex = tex, color = CONFETTI_COLORS[(i - 1) % #CONFETTI_COLORS + 1] }
+    end
+    return layer
+end
+
+local function StopConfetti()
+    frame.confettiOn = false
+    for _, piece in ipairs(frame.confetti.pieces) do
+        piece.active = false
+        piece.tex:Hide()
+    end
+end
+
+local function StartConfetti()
+    local seed = 11
+    local function Random()
+        seed = (seed * 1103515245 + 12345) % 2147483648
+        return seed / 2147483648
+    end
+    for _, piece in ipairs(frame.confetti.pieces) do
+        piece.x = (Random() - 0.5) * (WIDTH - 60)
+        piece.y = -8 - Random() * 70 -- just under the top edge
+        piece.delay = Random() * 1.8
+        piece.speed = 65 + Random() * 70
+        piece.sway = 8 + Random() * 22
+        piece.swaySpeed = 1.5 + Random() * 2
+        piece.phase = Random() * 6.28
+        piece.spin = (Random() - 0.5) * 7
+        piece.flip = 3 + Random() * 5
+        piece.size = 9 + Random() * 6
+        piece.age = 0
+        piece.active = true
+        piece.tex:SetSize(piece.size, piece.size)
+    end
+    frame.confettiOn = true
+end
+
+local function UpdateConfetti(elapsed)
+    if not frame.confettiOn then
+        return
+    end
+    local floorY = -(STAGE_BOTTOM - 10)
+    local any = false
+    for _, piece in ipairs(frame.confetti.pieces) do
+        if piece.active then
+            any = true
+            piece.age = piece.age + elapsed
+            local t = piece.age - piece.delay
+            local y = piece.y - piece.speed * max(0, t)
+            local tex = piece.tex
+            if t < 0 then
+                tex:Hide()
+            elseif y < floorY then
+                piece.active = false
+                tex:Hide()
+            else
+                -- tumbling paper: turns, and catches the light as it flips
+                local flip = math.abs(math.cos(t * piece.flip))
+                local color, shade = piece.color, 0.55 + 0.45 * flip
+                tex:SetVertexColor(color[1] * shade, color[2] * shade, color[3] * shade)
+                tex:SetRotation(piece.phase + piece.spin * t)
+                tex:ClearAllPoints()
+                tex:SetPoint("CENTER", frame, "TOP", piece.x + piece.sway * sin(piece.phase + t * piece.swaySpeed), y)
+                tex:SetAlpha(max(0, min(1, t / 0.3, (y - floorY) / 60)))
+                tex:Show()
+            end
+        end
+    end
+    frame.confettiOn = any
+end
+
+--------------------------------------------------------------------------
 -- Building the window
 --------------------------------------------------------------------------
 
@@ -464,20 +578,38 @@ local function CreateSlot(parent, rank)
     slot.beam:SetSize(step.w * 1.15, step.height * 1.25)
     slot.beam:SetPoint("BOTTOM", 0, step.step - 10)
     slot.beam:SetAlpha(mvp and 0.35 or 0.16)
-    slot.pool = Tex(slot, "BACKGROUND", 2, "glow")
-    slot.pool:SetSize(step.w * 0.95, 30)
-    slot.pool:SetPoint("CENTER", slot, "BOTTOM", 0, step.step + 2)
+    slot.pool = Tex(slot, "ARTWORK", -2, "glow")
+    slot.pool:SetSize(step.w * 0.9, TOP_DEPTH * 1.6)
+    slot.pool:SetPoint("CENTER", slot, "BOTTOM", 0, step.step)
 
-    -- the step
-    slot.block = Solid(slot, "BORDER", 0, 1, 1, 1, 1)
-    slot.block:SetPoint("BOTTOMLEFT", 6, 0)
-    slot.block:SetPoint("BOTTOMRIGHT", -6, 0)
-    slot.block:SetHeight(step.step)
-    Gradient(slot.block, step.color[1], step.color[2], step.color[3], 0.55, 0.95)
-    slot.blockTop = Solid(slot, "BORDER", 1, min(1, step.color[1] + 0.25), min(1, step.color[2] + 0.25), min(1, step.color[3] + 0.25), 1)
-    slot.blockTop:SetPoint("BOTTOMLEFT", slot.block, "TOPLEFT", 0, -4)
-    slot.blockTop:SetPoint("BOTTOMRIGHT", slot.block, "TOPRIGHT", 0, -4)
-    slot.blockTop:SetHeight(4)
+    -- the step: a metal block, touching its neighbors like one podium
+    local c = step.color
+    local half = SLOT_GAP / 2
+    slot.front = Img(slot, "BORDER", 0, "podium_front")
+    slot.front:SetVertexColor(c[1], c[2], c[3])
+    slot.front:SetPoint("BOTTOMLEFT", -half, 0)
+    slot.front:SetPoint("BOTTOMRIGHT", half, 0)
+    slot.front:SetHeight(step.step - TOP_DEPTH / 2)
+    slot.top = Img(slot, "BORDER", 1, "podium_top")
+    slot.top:SetVertexColor(min(1, c[1] * 1.12), min(1, c[2] * 1.12), min(1, c[3] * 1.12))
+    slot.top:SetPoint("BOTTOMLEFT", slot.front, "TOPLEFT")
+    slot.top:SetPoint("BOTTOMRIGHT", slot.front, "TOPRIGHT")
+    slot.top:SetHeight(TOP_DEPTH)
+    -- shade on the top face next to a taller neighbor (placed by FillStage)
+    slot.ao = Solid(slot, "BORDER", 2, 0, 0, 0, 0.4)
+    slot.ao:SetSize(26, TOP_DEPTH)
+    -- contact shadow under the feet
+    slot.shadow = Img(slot, "BORDER", 3, "shadow")
+    slot.shadow:SetSize(step.w * 0.62, TOP_DEPTH * 0.9)
+    slot.shadow:SetPoint("CENTER", slot, "BOTTOM", 0, step.step)
+    slot.shadow:SetAlpha(0.75)
+    -- dark seams where the blocks meet
+    for _, side in ipairs({ "LEFT", "RIGHT" }) do
+        local seam = Solid(slot, "BORDER", 4, 0, 0, 0, 0.55)
+        seam:SetWidth(1)
+        seam:SetPoint("TOP" .. side, slot.top, "TOP" .. side, side == "LEFT" and 1 or -1, 0)
+        seam:SetPoint("BOTTOM" .. side, slot.front, "BOTTOM" .. side)
+    end
 
     -- stand-in when the character can't be shown (the character itself is
     -- borrowed from ns.Models when the ceremony opens)
@@ -487,21 +619,22 @@ local function CreateSlot(parent, rank)
     slot.icon:SetSize(mvp and 70 or 56, mvp and 70 or 56)
     slot.icon:SetPoint("CENTER", slot.ring, "CENTER")
 
-    -- the front of the step: (MVP) name, score
-    local top = -7
+    -- the front of the step: (MVP) name, score, centered on the engraved plaque
+    local frontHeight = step.step - TOP_DEPTH / 2
+    local top = -max(8, math.floor((frontHeight - 31) / 2))
     if mvp then
         slot.badge = Text(slot, 26, { 1, 0.95, 0.75 }, "OUTLINE")
-        slot.badge:SetPoint("TOP", slot.block, "TOP", 0, -8)
+        slot.badge:SetPoint("TOP", slot.front, "TOP", 0, -16)
         slot.laurelL = Tex(slot, "ARTWORK", 2, "star", 26)
         slot.laurelL:SetPoint("RIGHT", slot.badge, "LEFT", -4, 0)
         slot.laurelL:SetVertexColor(1, 0.95, 0.7)
         slot.laurelR = Tex(slot, "ARTWORK", 2, "star", 26)
         slot.laurelR:SetPoint("LEFT", slot.badge, "RIGHT", 4, 0)
         slot.laurelR:SetVertexColor(1, 0.95, 0.7)
-        top = -38
+        top = -48
     end
     slot.name = Text(slot, mvp and 16 or 13, GOLD, "OUTLINE")
-    slot.name:SetPoint("TOP", slot.block, "TOP", 0, top)
+    slot.name:SetPoint("TOP", slot.front, "TOP", 0, top)
     slot.name:SetWidth(step.w - 18)
     slot.name:SetWordWrap(false)
     slot.roleIcon = slot:CreateTexture(nil, "OVERLAY")
@@ -510,13 +643,12 @@ local function CreateSlot(parent, rank)
     slot.score:SetPoint("TOP", slot.name, "BOTTOM", 7, mvp and -4 or -3)
     slot.roleIcon:SetPoint("RIGHT", slot.score, "LEFT", -3, 0)
 
-    -- other titles: on the MVP's step, above everyone else's head
-    slot.extra = Text(slot, mvp and 11 or 10, mvp and { 0.24, 0.13, 0 } or { 0.85, 0.75, 0.5 })
-    slot.extra:SetWidth(step.w - 10)
+    -- other titles, above the head (placed by PlaceRegions)
+    slot.extra = Text(slot, mvp and 11 or 10, mvp and { 1, 0.86, 0.45 } or { 0.85, 0.75, 0.5 })
+    slot.extra:SetWidth(mvp and step.w + 40 or step.w - 10)
     slot.extra:SetWordWrap(false)
     if mvp then
-        slot.extra:SetShadowColor(1, 0.9, 0.5, 0.35) -- dark text on gold
-        slot.extra:SetPoint("TOP", slot.score, "BOTTOM", -7, -6)
+        slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, step.step + step.height)
     else
         slot.extra:SetPoint("BOTTOM", slot, "BOTTOM", 0, step.step + step.height * 1.12)
         slot.badge = Text(slot, 13, GOLD, "OUTLINE")
@@ -687,12 +819,24 @@ function Ceremony:Create()
     frame.rays:SetPoint("CENTER", frame, "TOP", 0, -(STAGE_BOTTOM - STEPS[1].step - STEPS[1].height / 2))
     frame.rays:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
 
+    -- Two stage lights from the sides, aimed at the MVP.
+    frame.spots = {}
+    for i, side in ipairs({ -1, 1 }) do
+        local spot = Tex(frame, "ARTWORK", 1, "beam", SPOT_SIZE)
+        spot:SetVertexColor(1, 0.92, 0.7)
+        spot:SetAlpha(0)
+        spot.lampX, spot.lampY = side * (WIDTH / 2 - 40), -(STAGE_TOP + 10) -- side lights, below the header
+        frame.spots[i] = spot
+    end
+
     frame.header = CreateHeader(frame)
     frame.potg = CreatePotgCard(frame)
     frame.slots = {}
     for rank = 1, MAX_SLOTS do
         frame.slots[rank] = CreateSlot(frame, rank)
     end
+
+    frame.confetti = CreateConfetti(frame)
 
     frame.more = Text(frame, 11, { 0.6, 0.6, 0.6 }, nil, "RIGHT")
     frame.more:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", -18, -(STAGE_BOTTOM - 4))
@@ -897,6 +1041,26 @@ local function FillStage(report)
         end
         x = x + w + SLOT_GAP
     end
+    -- shade on a step's top face where a taller step rises next to it
+    for i, slot in ipairs(row) do
+        slot.ao:Hide()
+        for _, j in ipairs({ i - 1, i + 1 }) do
+            local other = row[j]
+            if other and STEPS[other.rank].step > STEPS[slot.rank].step then
+                local right = j > i
+                slot.ao:ClearAllPoints()
+                slot.ao:SetPoint(right and "TOPRIGHT" or "TOPLEFT", slot.top, right and "TOPRIGHT" or "TOPLEFT")
+                slot.ao:SetColorTexture(1, 1, 1, 1)
+                if slot.ao.SetGradient and CreateColor then
+                    local dark, clear = CreateColor(0, 0, 0, 0.45), CreateColor(0, 0, 0, 0)
+                    pcall(slot.ao.SetGradient, slot.ao, "HORIZONTAL", right and clear or dark, right and dark or clear)
+                else
+                    slot.ao:SetColorTexture(0, 0, 0, 0.25)
+                end
+                slot.ao:Show()
+            end
+        end
+    end
     -- turn slightly toward the middle
     for _, slot in ipairs(used) do
         slot.facing = slot.baseX < mvpX and 0.35 or (slot.baseX > mvpX and -0.35 or 0)
@@ -906,6 +1070,13 @@ local function FillStage(report)
     end
     frame.rays:ClearAllPoints()
     frame.rays:SetPoint("CENTER", frame, "TOP", mvpX, -(STAGE_BOTTOM - STEPS[1].step - frame.slots[1].geometry.visible / 2))
+    -- stage lights aimed at the MVP's chest
+    local mvpSlot = frame.slots[1]
+    local targetY = -(STAGE_BOTTOM - STEPS[1].step - mvpSlot.geometry.visible * 0.55)
+    for _, spot in ipairs(frame.spots) do
+        spot.aim = math.atan2(mvpX - spot.lampX, -(targetY - spot.lampY))
+        AimSpot(spot, spot.aim)
+    end
     local hidden = #report.players - #used
     frame.more:SetText(hidden > 0 and L.MORE_PLAYERS:format(hidden) or "")
     -- reveal from the outside in, MVP last
@@ -1026,6 +1197,20 @@ function Ceremony:OnUpdate(elapsed)
     end
     local flash = clock - 0.6
     frame.potg.flash:SetAlpha(flash > 0 and max(0, 0.6 * (1 - flash / 1.2)) or 0)
+    -- stage lights come on with the MVP and sweep a little
+    for i, spot in ipairs(frame.spots) do
+        if spot.aim then
+            AimSpot(spot, spot.aim + 0.06 * sin(clock * 0.7 + i * 2.1))
+            spot:SetAlpha(mvpIn * (0.42 + 0.06 * sin(clock * 1.3 + i)))
+        end
+    end
+    if not frame.confettiStarted and frame.mvpStart and clock >= frame.mvpStart then
+        frame.confettiStarted = true
+        if not (ns.db and ns.db.confetti == false) then
+            StartConfetti()
+        end
+    end
+    UpdateConfetti(elapsed)
 
     if clock >= finishTime and closeIn then
         if not frame:IsMouseOver() then
@@ -1074,6 +1259,8 @@ function Ceremony:Show(report)
     frame:Show() -- models load only while shown
     local slots = FillStage(report)
     BuildTimeline(slots)
+    StopConfetti()
+    frame.confettiStarted = false
     clock = 0
     for _, element in ipairs(elements) do
         Apply(element, 0)

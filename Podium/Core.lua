@@ -24,6 +24,7 @@ local DEFAULTS = {
     models = true, -- players' characters with emotes on the podium
     modelSize = 100, -- %
     modelOffset = 0, -- move the characters up (+) or down (-) on their step
+    confetti = true,
     dim = true,
     sound = true,
     fun = true,
@@ -70,6 +71,26 @@ local function CopyDefaults(src, dst)
         end
     end
     return dst
+end
+
+-- Saved settings from older versions.
+function ns.Migrate(saved)
+    saved.everyBoss = nil -- removed option (1.2)
+    -- Character height: the placement found right in game is built in, so
+    -- that setting is 0 now. A saved 0 (never moved) stays 0; anything else
+    -- keeps its look.
+    local function Shift(by)
+        local offset = saved.modelOffset or 0
+        saved.modelOffset = offset == 0 and 0 or math.max(-40, math.min(40, offset + by))
+    end
+    if (saved.dbVersion or 1) < 2 then
+        Shift(40) -- 1.2.1 looked right at -40
+    end
+    if (saved.dbVersion or 1) < 3 then
+        Shift(-6) -- 1.2.2 looked right at +6
+    end
+    saved.dbVersion = 3
+    return saved
 end
 
 local function InCombat()
@@ -616,13 +637,7 @@ function ns:ADDON_LOADED(name)
     if type(db.history) ~= "table" then
         db.history = {}
     end
-    db.everyBoss = nil -- removed option (1.2)
-    if (db.dbVersion or 1) < 2 then
-        -- 1.2.2 builds the old "-40" into the character placement: that is 0 now.
-        local offset = db.modelOffset or 0
-        db.modelOffset = offset == 0 and 0 or math.max(-40, math.min(40, offset + 40))
-    end
-    db.dbVersion = 2
+    ns.Migrate(db)
     ns.db = db
 
     Register("PLAYER_LOGIN")

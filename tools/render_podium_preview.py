@@ -332,8 +332,11 @@ def draw_texture(canvas, item):
         r, g, b, a = (item["color"][i] for i in range(1, 5))
         grad = item["gradient"]
         if grad is not None:
-            lo, hi = grad[2], grad[3]  # VERTICAL: min at the bottom, max at the top
-            t = np.linspace(1, 0, h)[:, None]
+            lo, hi = grad[2], grad[3]
+            if grad[1] == "HORIZONTAL":  # min at the left, max at the right
+                t = np.linspace(0, 1, w)[None, :]
+            else:  # VERTICAL: min at the bottom, max at the top
+                t = np.linspace(1, 0, h)[:, None]
             layer = np.zeros((h, w, 4))
             for k, key in enumerate("rgb"):
                 layer[..., k] = (lo[key] + (hi[key] - lo[key]) * t) * (r, g, b)[k]

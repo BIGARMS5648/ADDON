@@ -196,7 +196,11 @@ test("loads with defaults, options and slash commands", function()
     eq(mock.settings.PODIUM_everyBoss, nil, "per-boss ceremony option removed")
     eq(PodiumDB.everyBoss, nil, "old saved setting dropped")
     eq(PodiumDB.modelOffset, 0, "1.2.1's -40 is the new 0")
-    eq(PodiumDB.dbVersion, 2, "settings version")
+    eq(PodiumDB.dbVersion, 3, "settings version")
+    eq(ns.Migrate({ dbVersion = 2, modelOffset = 6 }).modelOffset, 0, "1.2.2's +6 is the new 0")
+    eq(ns.Migrate({ dbVersion = 2, modelOffset = 10 }).modelOffset, 4, "other values keep their look")
+    eq(ns.Migrate({ dbVersion = 2, modelOffset = 0 }).modelOffset, 0, "never moved: 0")
+    eq(ns.Migrate({ dbVersion = 3, modelOffset = 6 }).modelOffset, 6, "current settings untouched")
     eq(mock.settings.PODIUM_autoClose.options.formatter(0), L.NEVER, "slider label")
     assert(SlashCmdList.PODIUM and SLASH_PODIUM1 == "/mvp", "slash")
     assert(printed(L.LOADED), "welcome message")
@@ -931,10 +935,14 @@ test("characters stand on their step; the MVP is bigger; adjustable", function()
         assert(math.abs(feet - STEPS[slot.rank].step) < 0.01, "feet on the step top")
         assert(math.abs(model.height * FILL - STEPS[slot.rank].height) < 0.01, "full size")
     end
-    -- the old placement with "-40" is the new 0 (side steps, 100%)
-    local side = frame().slots[2].model
-    local old = STEPS[2].step - side.height * (1 - FILL) / 2 - 40
-    assert(math.abs(side.points[1][5] - old) < 1, "same as 1.2.1 at -40")
+    -- feet in the middle of the step's top face; within a few pixels of
+    -- where 1.2.2 put them at +6 (6 above the front edge)
+    local slot2 = frame().slots[2]
+    local side = slot2.model
+    local frontTop = slot2.front.height
+    eq(frontTop, STEPS[2].step - 8, "top face above the front, feet in its middle")
+    local feet = side.points[1][5] + side.height * MARGIN
+    assert(math.abs(feet - (frontTop + 6)) <= 3, "close to 1.2.2 at +6")
     -- only the MVP got bigger
     local mvp, second = frame().slots[1].geometry, frame().slots[2].geometry
     assert(mvp.visible > second.visible * 1.35, "MVP clearly bigger")
@@ -946,12 +954,50 @@ test("characters stand on their step; the MVP is bigger; adjustable", function()
     ns.Ceremony:Skip()
     side = frame().slots[2].model
     assert(math.abs(side.height * FILL - STEPS[2].height * 1.2) < 0.01, "120%")
-    local feet = side.points[1][5] + side.height * MARGIN
+    feet = side.points[1][5] + side.height * MARGIN
     assert(math.abs(feet - (STEPS[2].step + 10)) < 0.01, "moved up 10")
     mvp = frame().slots[1].geometry
     assert(mvp.feet + mvp.visible <= 500 - 92 - 6 + 0.01, "MVP still below the header at 120%")
     assert(mock.settings.PODIUM_modelSize and mock.settings.PODIUM_modelOffset, "settings")
     eq(mock.settings.PODIUM_modelOffset.default, 0, "default 0")
+end)
+
+test("stage effects: 3D steps, stage lights, confetti", function()
+    reset()
+    ns:ShowDemo()
+    local f = frame()
+    eq(f.confettiOn, false, "no confetti before the MVP")
+    ns.Ceremony:Skip()
+    update(0.5)
+    assert(f.confettiOn, "confetti with the MVP")
+    local falling, y0 = nil, nil
+    for _, piece in ipairs(f.confetti.pieces) do
+        if piece.tex.shown then
+            falling = piece
+            y0 = piece.tex.points[1][5]
+            break
+        end
+    end
+    assert(falling, "pieces in the air")
+    update(0.5)
+    assert(falling.tex.points[1][5] < y0, "falling down")
+    update(12)
+    eq(f.confettiOn, false, "lands and stops")
+    for _, spot in ipairs(f.spots) do
+        assert(spot.alpha > 0.3, "stage lights on")
+    end
+    assert(f.spots[1].rotation > 0 and f.spots[2].rotation < 0, "both aimed at the middle")
+    -- steps: metal front + top face, shade next to a taller neighbor
+    eq(f.slots[2].front.texture:match("podium_front$") ~= nil, true, "metal front")
+    eq(f.slots[2].ao.shown, true, "2nd place shaded by the MVP's step")
+    eq(f.slots[1].ao.shown, false, "nothing taller than the MVP")
+    ns.Ceremony:Hide()
+    PodiumDB.confetti = false
+    ns:ShowDemo()
+    ns.Ceremony:Skip()
+    update(1)
+    eq(f.confettiOn, false, "confetti off")
+    assert(mock.settings.PODIUM_confetti, "option")
 end)
 
 test("characters can be turned off", function()

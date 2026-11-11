@@ -103,7 +103,8 @@ def check_media(addon):
     addon_dir = os.path.join(ROOT, addon)
     code = "\n".join(read(os.path.join(addon_dir, n)) for n in toc_files(addon))
     names = set(re.findall(r'CreateTex\(fx, "(\w+)"', code))  # Twinkle
-    names |= set(re.findall(r'Tex\(\w+(?:\.\w+)*, "\w+", -?\d+, "(\w+)"', code))  # Podium
+    names |= set(re.findall(r'(?:Tex|Img)\(\w+(?:\.\w+)*, "\w+", -?\d+, "(\w+)"', code))  # Podium
+    names |= set(re.findall(r'MEDIA \.\. "(\w+)"', code))
     names |= set(re.findall(r'Media\\\\(\w+)', code))
     missing = [n for n in sorted(names) if not os.path.exists(os.path.join(addon_dir, "Media", n + ".tga"))]
     for n in missing:
