@@ -627,7 +627,7 @@ local function PartyMembers()
 end
 
 function Awards.DemoRun()
-    local myName = ns.Safe(UnitName("player")) or "Big Podium"
+    local myName = ns.Safe(UnitName("player")) or "BIG PODIUM"
     local _, myClass = UnitClass("player")
     myClass = ns.Safe(myClass) or "MAGE"
     -- dps / hps / damage taken per second, interrupts and dispels per minute

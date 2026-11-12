@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a picture of Big Podium's ceremony window from the addon's own code.
+"""Render a picture of BIG PODIUM's ceremony window from the addon's own code.
 
 The addon is loaded into the mocked WoW API from tests/, the preview ceremony
 (/mvp test, with a made-up party) is opened and skipped to its end, and the

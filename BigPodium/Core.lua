@@ -49,7 +49,7 @@ local harvestQueued = false
 local encounterCache = {} -- [instance map ID] = Adventure Guide boss list
 
 local function Print(...)
-    print("|cffffd100Big Podium|r:", ...)
+    print("|cffffd100BIG PODIUM|r:", ...)
 end
 ns.Print = Print
 

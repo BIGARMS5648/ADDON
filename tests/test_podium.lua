@@ -1,4 +1,4 @@
--- Behavior tests for Big Podium against tests/wow_mock.lua.
+-- Behavior tests for BIG PODIUM against tests/wow_mock.lua.
 -- Run with: python3 tests/run_tests.py BigPodium
 
 local mock = _G.mock

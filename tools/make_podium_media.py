@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the textures used by Big Podium.
+"""Generate the textures used by BIG PODIUM.
 
 Light textures (rays, glow, star, ring, beam) are white with a shaped alpha
 channel; the addon tints them gold with SetVertexColor() and draws them with

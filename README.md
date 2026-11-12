@@ -2,14 +2,14 @@
 
 | 애드온 | 하는 일 |
 | --- | --- |
-| [Big Podium (시상식)](#big-podium-시상식) | 던전을 클리어하면 미터기 기록으로 **MVP · 최고의 플레이(POTG)** 시상식을 보여 줍니다. |
+| [BIG PODIUM (시상식)](#big-podium-시상식) | 던전을 클리어하면 미터기 기록으로 **MVP · 최고의 플레이(POTG)** 시상식을 보여 줍니다. |
 | [Twinkle (반짝이)](#twinkle-반짝이) | 퀘스트 오브젝트, 약초, 광맥을 반짝이게 표시합니다. |
 
 설치는 둘 다 같습니다. 애드온 폴더(`BigPodium`, `Twinkle`)를 통째로 `World of Warcraft\_forever_\Interface\AddOns\` 안에 복사하고, 캐릭터 선택 화면의 **애드온** 목록에서 켜져 있는지 확인하세요. (`BigPodium.toc` 파일이 `AddOns\BigPodium\` 바로 안에 있어야 합니다.)
 
 ---
 
-# Big Podium (시상식)
+# BIG PODIUM (시상식)
 
 AOS 게임이 끝나면 나오는 MVP / POTG 화면처럼, **던전을 클리어하면 시상식**이 열립니다. 데이터는 게임에 내장된 **미터기 기록**(`C_DamageMeter`)에서 가져옵니다. 포에버의 미터기 애드온 대부분도 이 기록을 보여 줍니다. 따로 미터기 애드온이 없어도 되고, 있어도 상관없습니다.
 
@@ -135,7 +135,7 @@ AOS 게임이 끝나면 나오는 MVP / POTG 화면처럼, **던전을 클리어
 | `/mvp test` | 가짜 기록으로 미리보기 (혼자면 내 캐릭터 5명, 파티 중이면 파티원 캐릭터 + 빈 자리는 내 캐릭터) |
 | `/mvp history`, `/mvp history 2` | 최근 기록 목록 / 2번째 기록 다시 보기 |
 | `/mvp share` | 지난 결과를 파티 대화로 공유 |
-| `/mvp options` | 설정 창 (`ESC > 설정 > 애드온 > Big Podium`) |
+| `/mvp options` | 설정 창 (`ESC > 설정 > 애드온 > BIG PODIUM`) |
 | `/mvp on`, `/mvp off` | 시상식 켜기 / 끄기 (꺼도 기록은 계속 남깁니다) |
 | `/mvp debug` | 미터기·던전 기록 상태 출력 |
 
