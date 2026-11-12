@@ -1,0 +1,30 @@
+## Interface: 16001
+## Title: |cffff7d0aBIGARMS|r
+## Notes: All-in-one quality of life suite for WoW Forever: automation, chat, tooltips, minimap, interface, items, quests, combat, waypoints.
+## Notes-koKR: 와우 포에버용 통합 편의 애드온: 자동화, 채팅, 툴팁, 미니맵, 인터페이스, 아이템, 퀘스트, 전투, 좌표.
+## Version: 1.0.0
+## Author: bigarms
+## IconTexture: Interface\AddOns\BIGARMS\Media\icon
+## SavedVariables: BIGARMSDB
+## SavedVariablesPerCharacter: BIGARMSCharDB
+## AddonCompartmentFunc: BIGARMS_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: BIGARMS_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: BIGARMS_OnAddonCompartmentLeave
+## X-Category: Quality of Life
+## X-Website: https://github.com/bigarms5648/addon
+
+Core\Locale.lua
+Core\Init.lua
+Modules\Automation.lua
+Modules\Chat.lua
+Modules\Tooltip.lua
+Modules\Minimap.lua
+Modules\Interface.lua
+Modules\Items.lua
+Modules\Quest.lua
+Modules\Combat.lua
+Modules\Map.lua
+Modules\System.lua
+Core\Options.lua
+Core\Slash.lua
+Core\MinimapButton.lua

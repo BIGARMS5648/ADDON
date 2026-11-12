@@ -1,3 +1,16 @@
+# WoW Forever 애드온
+
+와우 포에버(WoW Forever)용 애드온 모음입니다.
+
+| 애드온 | 설명 |
+| --- | --- |
+| [BIGARMS](BIGARMS/README.md) | **통합 편의 애드온.** 자동 수리 · 잡템 판매 · 자동 퀘스트 · 채팅 · 툴팁 · 미니맵 · 인터페이스 · 아이템 · 퀘스트 · 전투 · 좌표 길찾기 · 골드 / 경험치 등 28개 모듈. `/ba` |
+| [Twinkle (반짝이)](#twinkle-반짝이) | 퀘스트 오브젝트 · 약초 · 광맥을 반짝이게 표시. `/tw` |
+
+둘 다 `World of Warcraft\_forever_\Interface\AddOns\` 에 폴더째 복사하면 됩니다. 같이 써도 됩니다.
+
+---
+
 # Twinkle (반짝이)
 
 WoW Forever(와우 포에버)용 애드온입니다. **퀘스트 오브젝트**, **약초**, **광맥**을 반짝이게 표시합니다.
@@ -101,6 +114,12 @@ pip install lupa
 
 ```bash
 python3 tests/run_tests.py
+```
+
+BIGARMS 테스트:
+
+```bash
+python3 tests/run_bigarms_tests.py
 ```
 
 텍스처와 미리보기 GIF 다시 만들기:
