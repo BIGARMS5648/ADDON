@@ -522,7 +522,31 @@ mock.spellNames[1752] = "사악한 일격"
 mock.spellNames[2061] = "순간 치유"
 C_Spell.GetSpellTexture = function(id) return 130000 + id end
 
-function UnitAffectingCombat(u) return u == "player" and mock.inCombat or false end
+function UnitAffectingCombat(u)
+    if u == "player" and mock.inCombat then return true end
+    local d = mock.units[u]
+    return d and d.combat or false
+end
+function UnitThreatSituation(u)
+    local d = mock.units[u]
+    return d and d.threat or 0
+end
+function UnitHealth(u)
+    local d = mock.units[u]
+    return d and (d.health or 100) or 0
+end
+function UnitHealthMax(u) return 100 end
+function UnitIsAFK(u)
+    local d = mock.units[u]
+    return d and d.afk or false
+end
+YOU = "You"
+LOOT_ITEM = "%s receives loot: %s."
+LOOT_ITEM_MULTIPLE = "%s receives loot: %sx%d."
+LOOT_ITEM_SELF = "You receive loot: %s."
+LOOT_ITEM_SELF_MULTIPLE = "You receive loot: %sx%d."
+LOOT_ROLL_ROLLED_NEED = "Need Roll - %d for %s by %s"
+LOOT_ROLL_ROLLED_GREED = "Greed Roll - %d for %s by %s"
 mock.dead = false
 function UnitIsDeadOrGhost(u) return u == "player" and mock.dead or false end
 function UnitExists(u) return mock.units[u] ~= nil end

@@ -32,6 +32,7 @@ local DEFAULTS = {
     autoClose = 60,
     scale = 100,
     keep = 5, -- finished runs kept for /mvp history
+    records = {}, -- ["dungeon|difficulty"] = fastest clear in seconds
     debug = false,
 }
 ns.DEFAULTS = DEFAULTS
@@ -574,6 +575,7 @@ function ns:ShowRun(run, request)
         Print(L.NO_RUN)
         return
     end
+    self:CheckRecord(run, request)
     local report = ns.Awards.Build(run, request)
     if not report then
         local available, reason = Meter.IsAvailable()
@@ -588,6 +590,22 @@ function ns:ShowRun(run, request)
         ns.Ceremony:Show(report)
     end
     return report
+end
+
+-- Fastest clear of this dungeon (and difficulty): compared once per run,
+-- when its ceremony first opens. Runs that ended by leaving don't count.
+function ns:CheckRecord(run, request)
+    if request.kind ~= "clear" or run.record or not run.complete or run.complete == "leave"
+        or not (run.started and run.ended) then
+        return
+    end
+    local key = ("%s|%s"):format(run.instance or "?", run.difficulty or "")
+    local length = run.ended - run.started
+    local best = db.records[key]
+    run.record = { time = length, previous = best, new = best == nil or length < best }
+    if run.record.new then
+        db.records[key] = length
+    end
 end
 
 -- Last ceremony, or the current run so far.

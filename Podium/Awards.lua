@@ -33,7 +33,7 @@ local TAKEN_WEIGHT = { TANK = 1, DAMAGER = 0.05, HEALER = 0.05 }
 
 local POTG_KIND_WEIGHT = { damage = 1, heal = 0.95, tank = 0.85, interrupts = 0.9 }
 local MIN_POTG_FIGHT = 8 -- seconds; shorter trash fights can't be the play of the game
-local MAX_AWARDS = 7
+local MAX_AWARDS = 16
 
 Awards.ICONS = {
     DAMAGE = "Interface\\Icons\\Ability_DualWield",
@@ -44,6 +44,19 @@ Awards.ICONS = {
     SURVIVOR = "Interface\\Icons\\Spell_Holy_PowerWordShield",
     FLOOR = "Interface\\Icons\\Spell_Fire_Fire",
     DEATHS = "Interface\\Icons\\Ability_Rogue_FeignDeath",
+    AGGRO = "Interface\\Icons\\Ability_Warrior_ShieldWall",
+    BUSY = "Interface\\Icons\\Spell_Nature_Lightning",
+    CLUTCH = "Interface\\Icons\\Spell_Nature_Reincarnation",
+    READY = "Interface\\Icons\\INV_Misc_PocketWatch_01",
+    WANNABE = "Interface\\Icons\\Ability_Warrior_Charge",
+    FUMBLE = "Interface\\Icons\\Spell_Nature_Slow",
+    LOOT = "Interface\\Icons\\INV_Misc_Bag_10",
+    LUCKY = "Interface\\Icons\\INV_Misc_Coin_01",
+    UNLUCKY = "Interface\\Icons\\INV_Misc_Bone_HumanSkull_01",
+    CHATTER = "Interface\\Icons\\INV_Misc_Note_01",
+    MOOD = "Interface\\Icons\\Spell_Nature_Polymorph",
+    LAGGER = "Interface\\Icons\\Spell_Shadow_Teleport",
+    AFK = "Interface\\Icons\\Spell_Nature_Sleep",
 }
 
 local floor, min, max = math.floor, math.min, math.max
@@ -122,6 +135,37 @@ local function Totals(list)
     return totals
 end
 
+-- What Tracker.lua recorded outside the meter (threat, casts, loot, chat...).
+local COUNTS = { "aggro", "clutch", "casts", "fumbles", "loot", "epics", "rolls", "chats", "emotes", "dc", "afk" }
+
+function Awards.AttachExtras(run, list)
+    local extra = run.extra or {}
+    local byName = {}
+    for _, entry in pairs(extra) do
+        if entry.name then
+            byName[entry.name] = entry
+        end
+    end
+    for _, p in ipairs(list) do
+        local entry = extra[p.key] or byName[p.name] or byName[ShortName(p.name)]
+        p.extra = entry or {}
+        for _, field in ipairs(COUNTS) do
+            p[field] = p.extra[field] or 0
+        end
+        p.bestRoll, p.worstRoll = p.extra.bestRoll, p.extra.worstRoll
+        -- shares and rates only with enough to go on
+        if (p.extra.threatTime or 0) >= 20 then
+            p.hold = (p.extra.holding or 0) / p.extra.threatTime
+        end
+        if (p.extra.combat or 0) >= 60 then
+            p.cpm = p.casts / (p.extra.combat / 60)
+        end
+        if (p.extra.readyCount or 0) > 0 then
+            p.readyAvg = p.extra.readySum / p.extra.readyCount
+        end
+    end
+end
+
 -- Roles the group didn't assign are guessed: mostly healing = healer,
 -- by far the most damage taken = tank, everyone else = damage.
 function Awards.GuessRoles(list, totals)
@@ -190,9 +234,12 @@ function Awards.Score(list, totals)
         if totals.avoid > 0 and #list > 1 then
             penalty = penalty + 20 * p.avoid / totals.avoid
         end
+        -- outside the meter: a tank holding aggro, others pulling it
+        p.threatBonus = (role == "TANK" and p.hold) and Round(10 * min(1, max(0, (p.hold - 0.6) / 0.35))) or 0
+        p.aggroPenalty = role ~= "TANK" and min(10, 2 * (p.aggro or 0)) or 0
         p.base = Round(100 * base)
-        p.bonus = min(20, 2 * (p.ints + p.disp))
-        p.penalty = Round(penalty)
+        p.bonus = min(20, 2 * (p.ints + p.disp)) + p.threatBonus
+        p.penalty = Round(penalty) + p.aggroPenalty
         p.score = max(0, p.base + p.bonus - p.penalty)
         p.dmgShare = totals.dmg > 0 and p.dmg / totals.dmg or 0
         p.healShare = totals.heal > 0 and p.heal / totals.heal or 0
@@ -342,6 +389,18 @@ local function Times(count)
     return count == 1 and L.VALUE_ONCE or L.VALUE_TIMES:format(count)
 end
 
+-- The player with the highest score(p) (nil scores don't count).
+local function BestBy(list, score)
+    local best, bestScore
+    for _, p in ipairs(list) do
+        local value = score(p)
+        if value and (not bestScore or value > bestScore) then
+            best, bestScore = p, value
+        end
+    end
+    return best
+end
+
 local function Best(list, field, filter)
     local best
     for _, p in ipairs(list) do
@@ -369,11 +428,48 @@ function Awards.Categories(list, totals, fun)
     Add("INTERRUPTS", p, p and Times(p.ints))
     p = Best(list, "disp")
     Add("DISPELS", p, p and Times(p.disp))
+    -- skill, from outside the meter
+    p = BestBy(list, function(q) return q.role == "TANK" and q.hold and q.hold >= 0.75 and q.hold or nil end)
+    Add("AGGRO", p, p and L.VALUE_HOLD:format(Round(p.hold * 100)))
+    p = BestBy(list, function(q) return q.cpm and q.casts >= 20 and q.cpm or nil end)
+    Add("BUSY", p, p and L.VALUE_CPM:format(Round(p.cpm)))
+    p = Best(list, "clutch")
+    Add("CLUTCH", p, p and L.VALUE_CLUTCH:format(Times(p.clutch)))
+    local answered = 0
+    for _, q in ipairs(list) do
+        answered = answered + (q.readyAvg and 1 or 0)
+    end
+    if answered >= 2 then
+        p = BestBy(list, function(q) return q.readyAvg and -q.readyAvg or nil end)
+        Add("READY", p, L.VALUE_READY:format(p.readyAvg))
+    end
     if fun then
         p = Best(list, "avoid")
         Add("FLOOR", p, p and L.VALUE_FLOOR:format(Num(p.avoid)))
         p = Best(list, "deaths")
         Add("DEATHS", p, p and Times(p.deaths))
+        p = Best(list, "aggro", function(q) return q.role ~= "TANK" and q.aggro >= 2 end)
+        Add("WANNABE", p, p and L.VALUE_AGGRO:format(Times(p.aggro)))
+        p = Best(list, "fumbles", function(q) return q.fumbles >= 3 end)
+        Add("FUMBLE", p, p and L.VALUE_FUMBLE:format(Times(p.fumbles)))
+        p = BestBy(list, function(q) return q.loot > 0 and q.epics * 100 + q.loot or nil end)
+        Add("LOOT", p, p and (p.epics > 0 and L.VALUE_LOOT_EPIC:format(p.loot, p.epics) or L.VALUE_LOOT:format(p.loot)))
+        p = BestBy(list, function(q) return q.bestRoll and q.bestRoll >= 90 and q.bestRoll or nil end)
+        Add("LUCKY", p, p and L.VALUE_ROLL:format(p.bestRoll))
+        local rolls = 0
+        for _, q in ipairs(list) do
+            rolls = rolls + q.rolls
+        end
+        p = rolls >= 3 and BestBy(list, function(q) return q.worstRoll and q.worstRoll <= 10 and -q.worstRoll or nil end)
+        Add("UNLUCKY", p or nil, p and L.VALUE_ROLL:format(p.worstRoll))
+        p = Best(list, "chats", function(q) return q.chats >= 5 end)
+        Add("CHATTER", p, p and L.VALUE_CHATS:format(p.chats))
+        p = Best(list, "emotes", function(q) return q.emotes >= 3 end)
+        Add("MOOD", p, p and L.VALUE_EMOTES:format(p.emotes))
+        p = Best(list, "dc")
+        Add("LAGGER", p, p and L.VALUE_DC:format(Times(p.dc)))
+        p = Best(list, "afk")
+        Add("AFK", p, p and L.VALUE_AFK:format(Times(p.afk)))
     end
     -- Nobody died and took the least avoidable damage (only when it means something).
     if #list >= 2 and (totals.deaths > 0 or totals.avoid > 0) then
@@ -405,6 +501,9 @@ local function Header(run, request)
     else
         tag, title = L.TAG_CLEAR, L.TITLE_CLEAR
     end
+    if kind ~= "demo" and run.record and run.record.new and run.record.previous then
+        tag = L.TAG_RECORD
+    end
     local length = (run.ended or run.leftAt or time()) - (run.started or time())
     return tag, title, length
 end
@@ -422,6 +521,17 @@ local function SubtitleParts(run, length, totals)
         parts[#parts + 1] = L.SUB_NO_DEATHS
     else
         parts[#parts + 1] = totals.deaths == 1 and L.SUB_ONE_DEATH or L.SUB_DEATHS:format(totals.deaths)
+    end
+    local wipes = run.wipes or 0
+    if wipes > 0 then
+        parts[#parts + 1] = wipes == 1 and L.SUB_ONE_WIPE or L.SUB_WIPES:format(wipes)
+    end
+    -- fastest clear of this dungeon so far (records kept by Core)
+    local record = run.record
+    if record and record.new and record.previous then
+        parts[#parts + 1] = L.SUB_RECORD_NEW:format(ns.FormatTime(record.previous))
+    elseif record and not record.new and record.previous then
+        parts[#parts + 1] = L.SUB_RECORD_BEST:format(ns.FormatTime(record.previous))
     end
     return parts
 end
@@ -461,6 +571,7 @@ function Awards.Build(run, request)
     if #list == 0 then
         return nil
     end
+    Awards.AttachExtras(run, list)
     local totals = Totals(list)
     Awards.GuessRoles(list, totals)
     Awards.Score(list, totals)
@@ -618,5 +729,21 @@ function Awards.DemoRun()
             run.killed[name] = true
         end
     end
+    -- what Tracker.lua would have seen outside the meter
+    local extras = {
+        ["demo-tank"] = { combat = 430, threatTime = 430, holding = 401, casts = 158 },
+        ["demo-heal"] = { combat = 430, threatTime = 430, casts = 251, chats = 9 },
+        ["demo-rogue"] = { combat = 430, threatTime = 430, aggro = 3, casts = 214, loot = 2, epics = 1, rolls = 3, bestRoll = 97, worstRoll = 41 },
+        ["demo-hunter"] = { combat = 430, threatTime = 430, casts = 188, clutch = 1, rolls = 2, bestRoll = 33, worstRoll = 2 },
+        ["demo-me"] = { combat = 430, threatTime = 430, casts = 289, loot = 1, rolls = 1, bestRoll = 64, worstRoll = 64 },
+    }
+    run.extra = {}
+    for _, member in ipairs(cast) do
+        local entry = extras[member.part]
+        entry.name = member.name
+        run.extra[member.key] = entry
+    end
+    run.wipes = 1
+    run.record = { time = now - run.started, previous = 1421 + 152, new = true }
     return run
 end

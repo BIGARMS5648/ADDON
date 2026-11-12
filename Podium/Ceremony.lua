@@ -69,8 +69,8 @@ local STAGE_ORDER = { 4, 2, 1, 3, 5 }
 
 -- Emote animations (AnimationData IDs).
 local ANIM = {
-    STAND = 0, BOW = 66, WAVE = 67, CHEER = 68, DANCE = 69, ROAR = 74, CRY = 77, CHICKEN = 78,
-    APPLAUD = 80, FLEX = 82, POINT = 84, SALUTE = 113,
+    STAND = 0, TALK = 60, BOW = 66, WAVE = 67, CHEER = 68, DANCE = 69, LAUGH = 70, SLEEP = 71, ROAR = 74,
+    CRY = 77, CHICKEN = 78, APPLAUD = 80, FLEX = 82, POINT = 84, SALUTE = 113,
 }
 -- What a player does on stage, by their headline title.
 local EMOTES = {
@@ -84,8 +84,23 @@ local EMOTES = {
     SURVIVOR = { ANIM.SALUTE, ANIM.CHEER },
     FLOOR = { ANIM.CHICKEN },
     DEATHS = { ANIM.CRY },
+    AGGRO = { ANIM.SALUTE, ANIM.ROAR },
+    BUSY = { ANIM.CHEER, ANIM.POINT },
+    CLUTCH = { ANIM.BOW, ANIM.CHEER },
+    READY = { ANIM.SALUTE, ANIM.WAVE },
+    WANNABE = { ANIM.ROAR, ANIM.FLEX },
+    FUMBLE = { ANIM.LAUGH },
+    LOOT = { ANIM.DANCE, ANIM.CHEER },
+    LUCKY = { ANIM.CHEER, ANIM.DANCE },
+    UNLUCKY = { ANIM.CRY },
+    CHATTER = { ANIM.TALK },
+    MOOD = { ANIM.DANCE },
+    LAGGER = { ANIM.WAVE },
+    AFK = { ANIM.SLEEP },
     NONE = { ANIM.APPLAUD },
 }
+-- Joke awards decide the emote over an ordinary award (not over MVP / POTG).
+local JOKES = { DEATHS = true, FLOOR = true, WANNABE = true, FUMBLE = true, UNLUCKY = true, LAGGER = true, AFK = true }
 Ceremony.ANIM, Ceremony.EMOTES = ANIM, EMOTES
 Ceremony.STEPS, Ceremony.MODEL_FILL, Ceremony.FEET_MARGIN = STEPS, MODEL_FILL, FEET_MARGIN
 
@@ -288,13 +303,41 @@ local function ShowStatTooltip(owner, p, titles)
         { L.STAT_DISPELS, L.STAT_COUNT:format(p.disp) },
         { L.STAT_DEATHS, L.STAT_COUNT:format(p.deaths) },
     }
+    -- outside the meter (only what was seen)
+    if p.hold then
+        lines[#lines + 1] = { L.STAT_HOLD, ("%d%%"):format(math.floor(p.hold * 100 + 0.5)) }
+    end
+    if (p.aggro or 0) > 0 then
+        lines[#lines + 1] = { L.STAT_AGGRO, L.STAT_COUNT:format(p.aggro) }
+    end
+    if p.cpm then
+        lines[#lines + 1] = { L.STAT_CPM, ("%.0f"):format(p.cpm) }
+    end
+    if (p.clutch or 0) > 0 then
+        lines[#lines + 1] = { L.STAT_CLUTCH, L.STAT_COUNT:format(p.clutch) }
+    end
+    if (p.loot or 0) > 0 then
+        lines[#lines + 1] = { L.STAT_LOOT, ("%d (%d)"):format(p.loot, p.epics or 0) }
+    end
+    if p.bestRoll then
+        lines[#lines + 1] = { L.STAT_ROLLS, ("%d / %d"):format(p.bestRoll, p.worstRoll or p.bestRoll) }
+    end
+    if (p.chats or 0) + (p.emotes or 0) > 0 then
+        lines[#lines + 1] = { L.STAT_SOCIAL, ("%d / %d"):format(p.chats or 0, p.emotes or 0) }
+    end
     for _, line in ipairs(lines) do
         GameTooltip:AddDoubleLine(line[1], line[2], 0.8, 0.8, 0.8, 1, 1, 1)
     end
     GameTooltip:AddLine(" ")
     GameTooltip:AddDoubleLine(L.SCORE_BASE, ("%d"):format(p.base), 0.8, 0.8, 0.8, 1, 1, 1)
-    GameTooltip:AddDoubleLine(L.SCORE_BONUS, ("+%d"):format(p.bonus), 0.8, 0.8, 0.8, 0.4, 1, 0.4)
-    GameTooltip:AddDoubleLine(L.SCORE_PENALTY, ("-%d"):format(p.penalty), 0.8, 0.8, 0.8, 1, 0.45, 0.45)
+    GameTooltip:AddDoubleLine(L.SCORE_BONUS, ("+%d"):format(p.bonus - (p.threatBonus or 0)), 0.8, 0.8, 0.8, 0.4, 1, 0.4)
+    if (p.threatBonus or 0) > 0 then
+        GameTooltip:AddDoubleLine(L.SCORE_THREAT, ("+%d"):format(p.threatBonus), 0.8, 0.8, 0.8, 0.4, 1, 0.4)
+    end
+    GameTooltip:AddDoubleLine(L.SCORE_PENALTY, ("-%d"):format(p.penalty - (p.aggroPenalty or 0)), 0.8, 0.8, 0.8, 1, 0.45, 0.45)
+    if (p.aggroPenalty or 0) > 0 then
+        GameTooltip:AddDoubleLine(L.SCORE_AGGRO, ("-%d"):format(p.aggroPenalty), 0.8, 0.8, 0.8, 1, 0.45, 0.45)
+    end
     GameTooltip:Show()
 end
 
@@ -949,7 +992,7 @@ local function EmotesFor(titles)
     end
     if headline.id ~= "MVP" and headline.id ~= "POTG" then
         for _, title in ipairs(titles) do
-            if title.id == "DEATHS" or title.id == "FLOOR" then
+            if JOKES[title.id] then
                 return EMOTES[title.id]
             end
         end

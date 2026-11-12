@@ -178,6 +178,8 @@ local function reset()
     mock.hidden, mock.noModel = {}, {}
     mock.raidSize = nil
     ns.Models:Forget()
+    ns.Tracker:Reset()
+    PodiumDB.records = {}
     joinParty(true)
 end
 
@@ -636,7 +638,7 @@ test("award categories", function()
     eq(byID.DISPELS, PARTY[HEALER].name, "dispels")
     eq(byID.FLOOR, "사냥꾼", "floor")
     eq(byID.DEATHS, "사냥꾼", "deaths")
-    eq(#rep.awards, 7, "capped at seven")
+    eq(#rep.awards, 8, "all eight that apply")
     PodiumDB.fun = false
     rep = build({ { name = "Pull", dur = 40, stats = stats } })
     for _, award in ipairs(rep.awards) do
@@ -668,6 +670,254 @@ test("number formatting", function()
     eq(ns.FormatTime(83), "1:23", "time")
     eq(ns.FormatTime(3725), "1:02:05", "hours")
     eq(ns.Awards.ShortName("힐러-아즈샤라"), "힐러", "realm removed")
+end)
+
+-- outside the meter ---------------------------------------------------------------
+
+local function unitOf(index)
+    return PARTY[index].unit
+end
+
+local function extraOf(index)
+    return run().extra and run().extra[PARTY[index].guid] or {}
+end
+
+local function sample(seconds)
+    ns.Tracker:Sample(seconds)
+end
+
+test("threat: a tank holding aggro, others pulling it", function()
+    reset()
+    enter()
+    for i = 1, 5 do
+        mock.units[unitOf(i)].combat = true
+    end
+    mock.units.party1.threat = 3 -- the tank has the mobs
+    for _ = 1, 20 do
+        sample(2)
+    end
+    mock.units.party3.threat = 2 -- a mob turns on the rogue
+    sample(0.5)
+    eq(extraOf(ROGUE).aggro, nil, "a flicker doesn't count")
+    sample(0.5)
+    sample(0.5)
+    eq(extraOf(ROGUE).aggro, 1, "two samples in a row: pulled aggro")
+    mock.units.party3.threat = 0
+    sample(0.5)
+    mock.units.party3.threat = 3
+    sample(0.5)
+    sample(0.5)
+    eq(extraOf(ROGUE).aggro, 2, "again")
+    local tank = extraOf(TANK)
+    assert(tank.holding / tank.threatTime > 0.95, "tank held it")
+    assert(tank.combat > 40, "time in combat")
+end)
+
+test("health: living through a fight at 10% or less", function()
+    reset()
+    enter()
+    mock.units.party2.combat = true
+    mock.units.party2.health = 7
+    sample(1)
+    mock.units.party2.health = 60
+    sample(1)
+    mock.units.party2.combat = false
+    sample(1)
+    eq(extraOf(HEALER).clutch, 1, "close call")
+    -- a fight that ends in death doesn't count
+    mock.units.party4.combat = true
+    mock.units.party4.health = 5
+    sample(1)
+    mock.units.party4.combat, mock.units.party4.dead = false, true
+    local dead = UnitIsDeadOrGhost
+    UnitIsDeadOrGhost = function(u) return mock.units[u] and mock.units[u].dead or false end
+    sample(1)
+    UnitIsDeadOrGhost = dead
+    eq(extraOf(HUNTER).clutch, nil, "died: no")
+end)
+
+test("hidden numbers are skipped", function()
+    reset()
+    enter()
+    mock.units.party1.combat = true
+    mock.units.party1.threat = mock.SECRET
+    mock.units.party1.health = mock.SECRET
+    sample(5)
+    eq(extraOf(TANK).threatTime, nil, "no threat time")
+    eq(extraOf(TANK).combat, 5, "combat time still counted")
+end)
+
+test("casts a minute and casts cut off", function()
+    reset()
+    enter()
+    mock.units.player.combat = nil
+    mock.inCombat = false
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-1", 133)
+    eq(extraOf(ME).casts, nil, "out of combat: no")
+    mock.inCombat = true
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-2", 133)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-2", 133) -- the same cast again
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-3", 133)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "nameplate1", "Cast-4", 133)
+    eq(extraOf(ME).casts, 2, "two casts")
+    mock.units.party4.combat = true
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "party4", "Cast-5", 75) -- Auto Shot
+    eq(extraOf(HUNTER).casts, nil, "auto shot doesn't count")
+    mock.fire("UNIT_SPELLCAST_INTERRUPTED", "player", "Cast-6", 133)
+    mock.fire("UNIT_SPELLCAST_INTERRUPTED", "player", "Cast-6", 133)
+    eq(extraOf(ME).fumbles, 1, "cut off once")
+    mock.inCombat = false
+end)
+
+test("loot and loot rolls from loot messages", function()
+    reset()
+    enter()
+    local epic = "|cffa335ee|Hitem:1|h[Sword]|h|r"
+    local green = "|cnIQ2:|Hitem:2|h[Boots]|h|r"
+    local gray = "|cff9d9d9d|Hitem:3|h[Junk]|h|r"
+    mock.fire("CHAT_MSG_LOOT", "도적 receives loot: " .. epic .. ".")
+    mock.fire("CHAT_MSG_LOOT", "도적 receives loot: " .. green .. "x2.")
+    mock.fire("CHAT_MSG_LOOT", "You receive loot: " .. green .. ".")
+    mock.fire("CHAT_MSG_LOOT", "You receive loot: " .. gray .. ".")
+    mock.fire("CHAT_MSG_LOOT", "Stranger receives loot: " .. epic .. ".")
+    eq(extraOf(ROGUE).loot, 2, "rogue: two items")
+    eq(extraOf(ROGUE).epics, 1, "one epic")
+    eq(extraOf(ME).loot, 1, "you: gray items don't count")
+    mock.fire("CHAT_MSG_LOOT", "Need Roll - 97 for " .. epic .. " by 도적")
+    mock.fire("CHAT_MSG_LOOT", "Greed Roll - 2 for " .. green .. " by 사냥꾼")
+    mock.fire("CHAT_MSG_LOOT", "Greed Roll - 40 for " .. green .. " by You")
+    eq(extraOf(ROGUE).bestRoll, 97, "best roll")
+    eq(extraOf(HUNTER).worstRoll, 2, "worst roll")
+    eq(extraOf(ME).rolls, 1, "your roll")
+    eq(run().rolls, 3, "rolls in the group")
+end)
+
+test("loot message formats with numbered arguments", function()
+    local args = { ("도적님이 [칼] 아이템에 55 굴림"):match((ns.Tracker.FormatToPattern("%3$s님이 %2$s 아이템에 %1$d 굴림"))) }
+    eq(#args, 3, "three captures")
+    local pattern, order = ns.Tracker.FormatToPattern("%3$s님이 %2$s 아이템에 %1$d 굴림")
+    eq(order[1], 3, "name is argument 3")
+    eq(order[3], 1, "roll is argument 1")
+    eq(ns.Tracker.LinkQuality("|cff0070dd|Hitem:1|h[x]|h|r"), 3, "rare by color")
+    eq(ns.Tracker.LinkQuality("|cnIQ4:|Hitem:1|h[x]|h|r"), 4, "epic by quality tag")
+    eq(("50% off"):match((ns.Tracker.FormatToPattern("%d%% off"))), "50", "literal %")
+end)
+
+test("chat, emotes, ready checks, disconnects, AFK, wipes", function()
+    reset()
+    enter()
+    for _ = 1, 5 do
+        mock.fire("CHAT_MSG_PARTY", "hi", PARTY[HEALER].name)
+    end
+    mock.fire("CHAT_MSG_PARTY", L.SHARE_HEADER:format("x"), PARTY[HEALER].name) -- our own result line
+    eq(extraOf(HEALER).chats, 5, "chat")
+    for _ = 1, 3 do
+        mock.fire("CHAT_MSG_TEXT_EMOTE", "dances", PARTY[ROGUE].name)
+    end
+    eq(extraOf(ROGUE).emotes, 3, "emotes")
+    mock.time = 2000
+    mock.fire("READY_CHECK", PARTY[TANK].name, 30)
+    mock.fire("READY_CHECK_CONFIRM", "party1", true) -- whoever asked
+    mock.time = 2001.5
+    mock.fire("READY_CHECK_CONFIRM", "party2", true)
+    mock.time = 2004
+    mock.fire("READY_CHECK_CONFIRM", "party3", true)
+    mock.fire("READY_CHECK_CONFIRM", "party4", false)
+    mock.fire("READY_CHECK_FINISHED")
+    eq(extraOf(TANK).readyCount, nil, "the one who asked")
+    eq(extraOf(HEALER).readySum, 1.5, "1.5 s")
+    eq(extraOf(HUNTER).readyCount, nil, "not ready")
+    mock.fire("UNIT_CONNECTION", "party4", false)
+    eq(extraOf(HUNTER).dc, 1, "disconnect")
+    mock.units.party1.afk = true
+    mock.fire("PLAYER_FLAGS_CHANGED", "party1")
+    mock.fire("PLAYER_FLAGS_CHANGED", "party1")
+    eq(extraOf(TANK).afk, 1, "AFK once")
+    pull("Boss", 60, typical(), function()
+        mock.fire("ENCOUNTER_END", 77, "Boss", 1, 5, 0)
+    end)
+    eq(run().wipes, 1, "wipe")
+end)
+
+test("outside-the-meter awards and score", function()
+    reset()
+    PodiumDB.fun = true
+    local inst = enter()
+    journal(inst, { { "Boss", 990 } })
+    for i = 1, 5 do
+        mock.units[unitOf(i)].combat = true
+    end
+    mock.units.party1.threat = 3
+    sample(100) -- long enough for shares and rates
+    for _ = 1, 3 do -- a mob turns on the rogue three times
+        mock.units.party3.threat = 2
+        sample(0.5)
+        sample(0.5)
+        mock.units.party3.threat = 0
+        sample(0.5)
+    end
+    for i = 1, 30 do
+        mock.fire("UNIT_SPELLCAST_SUCCEEDED", "party4", "C" .. i, 3044)
+    end
+    for i = 1, 4 do
+        mock.fire("UNIT_SPELLCAST_INTERRUPTED", "party2", "I" .. i, 2061)
+    end
+    mock.fire("CHAT_MSG_LOOT", "도적 receives loot: |cffa335ee|Hitem:1|h[Sword]|h|r.")
+    mock.fire("CHAT_MSG_LOOT", "Need Roll - 99 for [x] by 도적")
+    mock.fire("CHAT_MSG_LOOT", "Need Roll - 1 for [x] by 사냥꾼")
+    mock.fire("CHAT_MSG_LOOT", "Need Roll - 50 for [x] by 탱커")
+    for i = 1, 5 do
+        mock.units[unitOf(i)].combat = nil
+    end
+    killBoss("Boss", 990, 90, typical(1.5))
+    local rep = report()
+    local byID = {}
+    for _, award in ipairs(rep.awards) do
+        byID[award.id] = award.player.name
+    end
+    eq(byID.AGGRO, "탱커", "aggro master")
+    eq(byID.WANNABE, "도적", "tank wannabe")
+    eq(byID.BUSY, "사냥꾼", "busy hands")
+    eq(byID.FUMBLE, PARTY[HEALER].name, "butterfingers")
+    eq(byID.LOOT, "도적", "loot king")
+    eq(byID.LUCKY, "도적", "dice god")
+    eq(byID.UNLUCKY, "사냥꾼", "unlucky")
+    local tank, rogue = playerIn(rep, TANK), playerIn(rep, ROGUE)
+    eq(tank.threatBonus, 10, "tank held aggro the whole time")
+    assert(rogue.aggroPenalty >= 4, "rogue pulled aggro: " .. rogue.aggroPenalty)
+    eq(playerIn(rep, ME).aggroPenalty, 0, "no aggro, no penalty")
+end)
+
+test("dungeon records", function()
+    reset()
+    mock.now = 50000
+    enter()
+    pull("Trash", 30, typical())
+    mock.now = mock.now + 900
+    mock.fire("LFG_COMPLETION_REWARD")
+    mock.flushTimers()
+    eq(run().record.new, true, "first clear sets the record")
+    eq(run().record.previous, nil, "nothing before")
+    assert(not report().subtitle:find(L.SUB_RECORD_BEST:format(""), 1, true), "no record line yet")
+    leave()
+    enter()
+    pull("Trash", 30, typical())
+    mock.now = mock.now + 700
+    mock.fire("LFG_COMPLETION_REWARD")
+    mock.flushTimers()
+    eq(report().tag, L.TAG_RECORD, "new record")
+    assert(report().subtitle:find(L.SUB_RECORD_NEW:format(ns.FormatTime(900)), 1, true), "was 15:00: " .. report().subtitle)
+    leave()
+    enter()
+    pull("Trash", 30, typical())
+    mock.now = mock.now + 800
+    mock.fire("LFG_COMPLETION_REWARD")
+    mock.flushTimers()
+    eq(report().tag, L.TAG_CLEAR, "slower: no record")
+    assert(report().subtitle:find(L.SUB_RECORD_BEST:format(ns.FormatTime(700)), 1, true), "best 11:40")
+    ns.Ceremony:Hide()
+    ns:ShowLast()
+    assert(report().subtitle:find(L.SUB_RECORD_BEST:format(ns.FormatTime(700)), 1, true), "showing it again doesn't change it")
 end)
 
 -- window --------------------------------------------------------------------------
@@ -752,7 +1002,11 @@ test("preview when alone: your own character plays all five", function()
         emotes[slot.model.animation] = true
     end
     eq(frame().slots[1].model.animation, ANIM.FLEX, "MVP flexes")
-    assert(emotes[ANIM.CHICKEN] and emotes[ANIM.APPLAUD], "each part does its own emote")
+    local kinds = 0
+    for _ in pairs(emotes) do
+        kinds = kinds + 1
+    end
+    assert(emotes[ANIM.CHICKEN] and kinds >= 4, "each part does its own emote")
     eq(report().players[1].name, "나", "your real name for the MVP")
     -- again: the same frames are reused, not new ones
     ns.Ceremony:Hide()
