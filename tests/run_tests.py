@@ -3,7 +3,7 @@
 
 Requires the `lupa` package (pip install lupa).
     python3 tests/run_tests.py            # every addon
-    python3 tests/run_tests.py Podium     # one addon
+    python3 tests/run_tests.py BigPodium  # one addon
 """
 
 import os
@@ -24,12 +24,12 @@ ADDONS = {
                  "Twinkle_OnAddonCompartmentLeave"],
         optional=["GetSpellInfo", "TwinkleDB", "GetMinimapShape"],
     ),
-    "Podium": dict(
+    "BigPodium": dict(
         test="test_podium.lua",
-        allowed=["PodiumDB", "SLASH_PODIUM1", "SLASH_PODIUM2", "SLASH_PODIUM3",
-                 "Podium_OnAddonCompartmentClick", "Podium_OnAddonCompartmentEnter",
-                 "Podium_OnAddonCompartmentLeave", "PodiumCeremonyFrame"],
-        optional=["GetSpellInfo", "PodiumDB", "C_ClassColor", "GetClassAtlas"],
+        allowed=["BigPodiumDB", "SLASH_BIGPODIUM1", "SLASH_BIGPODIUM2", "SLASH_BIGPODIUM3",
+                 "BigPodium_OnAddonCompartmentClick", "BigPodium_OnAddonCompartmentEnter",
+                 "BigPodium_OnAddonCompartmentLeave", "BigPodiumCeremonyFrame"],
+        optional=["GetSpellInfo", "BigPodiumDB", "C_ClassColor", "GetClassAtlas"],
     ),
 }
 

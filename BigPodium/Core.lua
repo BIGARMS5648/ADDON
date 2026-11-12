@@ -49,7 +49,7 @@ local harvestQueued = false
 local encounterCache = {} -- [instance map ID] = Adventure Guide boss list
 
 local function Print(...)
-    print("|cffffd100Podium|r:", ...)
+    print("|cffffd100Big Podium|r:", ...)
 end
 ns.Print = Print
 
@@ -650,8 +650,8 @@ function ns:ADDON_LOADED(name)
         return
     end
     events:UnregisterEvent("ADDON_LOADED")
-    PodiumDB = PodiumDB or {}
-    db = CopyDefaults(DEFAULTS, PodiumDB)
+    BigPodiumDB = BigPodiumDB or {}
+    db = CopyDefaults(DEFAULTS, BigPodiumDB)
     if type(db.history) ~= "table" then
         db.history = {}
     end

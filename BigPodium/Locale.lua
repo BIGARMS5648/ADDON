@@ -4,7 +4,7 @@ local ADDON, ns = ...
 local L = setmetatable({}, { __index = function(_, key) return key end })
 ns.L = L
 
-L.TITLE = "Podium"
+L.TITLE = "Big Podium"
 L.LOADED = "Loaded. An award ceremony appears when you clear a dungeon. |cffffd100/mvp|r shows the last one."
 
 -- ceremony header
@@ -142,7 +142,7 @@ L.HINT = "Click to skip  ·  Drag to move  ·  Esc to close"
 L.AUTO_CLOSE = "Closes in %d s"
 
 -- chat sharing (plain text, sent to group chat)
-L.SHARE_HEADER = "[Podium] %s"
+L.SHARE_HEADER = "[Big Podium] %s"
 L.SHARE_MVP = "MVP: %s (impact %d)"
 L.SHARE_POTG = "Play of the Game: %s - %s %s"
 L.SHARE_AWARD = "%s: %s"
@@ -218,7 +218,7 @@ function ns.FormatNumber(value)
 end
 
 if GetLocale() == "koKR" then
-    L.TITLE = "Podium (시상식)"
+    L.TITLE = "Big Podium"
     L.LOADED = "로드됨. 던전을 클리어하면 시상식이 열립니다. |cffffd100/mvp|r 로 지난 시상식을 다시 볼 수 있습니다."
 
     L.TAG_CLEAR = "DUNGEON CLEAR"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a picture of Podium's ceremony window from the addon's own code.
+"""Render a picture of Big Podium's ceremony window from the addon's own code.
 
 The addon is loaded into the mocked WoW API from tests/, the preview ceremony
 (/mvp test, with a made-up party) is opened and skipped to its end, and the
@@ -267,7 +267,7 @@ def solid(w, h, color, alpha):
 def load_media(path, cache={}):
     name = path.split("\\")[-1]
     if name not in cache:
-        file = os.path.join(ROOT, "Podium", "Media", name + ".tga")
+        file = os.path.join(ROOT, "BigPodium", "Media", name + ".tga")
         cache[name] = Image.open(file).convert("RGBA") if os.path.exists(file) else None
     return cache[name]
 
@@ -348,7 +348,7 @@ def draw_texture(canvas, item):
     vertex = item["vertex"]
     tint = np.array([vertex[1], vertex[2], vertex[3]]) if vertex is not None else np.ones(3)
     tex = item["texture"]
-    if isinstance(tex, str) and "AddOns\\Podium\\Media" in tex:
+    if isinstance(tex, str) and "AddOns\\BigPodium\\Media" in tex:
         img = load_media(tex)
         if img is None:
             return
@@ -555,7 +555,7 @@ def background(canvas):
 def main():
     locale = sys.argv[1] if len(sys.argv) > 1 else "koKR"
     out = sys.argv[2] if len(sys.argv) > 2 else os.path.join(ROOT, "docs", "podium_preview.png")
-    lua, run_chunk, mock = run_tests.load("Podium", locale)
+    lua, run_chunk, mock = run_tests.load("BigPodium", locale)
     name = "모험가" if locale == "koKR" else "Adventurer"
     lua.execute(f"""
         mock.units.player = {{ name = "{name}", guid = "Player-1-0001", class = "MAGE" }}
@@ -564,7 +564,7 @@ def main():
         for i, m in ipairs(party) do
             mock.units["party" .. i] = {{ name = m[1], class = m[2], role = m[3], guid = "Player-1-000" .. (i + 1) }}
         end
-        mock.fire("ADDON_LOADED", "Podium")
+        mock.fire("ADDON_LOADED", "BigPodium")
         mock.fire("PLAYER_LOGIN")
         ns:ShowDemo()
         ns.Ceremony:Skip()

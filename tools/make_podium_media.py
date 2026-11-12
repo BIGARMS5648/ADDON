@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the textures used by Podium.
+"""Generate the textures used by Big Podium.
 
 Light textures (rays, glow, star, ring, beam) are white with a shaped alpha
 channel; the addon tints them gold with SetVertexColor() and draws them with
@@ -9,7 +9,7 @@ is a white flake tinted per piece. The icon is a colored podium. All are
 uncompressed 32-bit TGA.
 
 Usage:
-    python3 tools/make_podium_media.py      # writes Podium/Media/*.tga
+    python3 tools/make_podium_media.py      # writes BigPodium/Media/*.tga
 """
 
 import math
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_textures import glow, grid, ray, ring, star, write_tga  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MEDIA = os.path.join(ROOT, "Podium", "Media")
+MEDIA = os.path.join(ROOT, "BigPodium", "Media")
 
 
 def rays(size=256, count=14):
@@ -181,7 +181,7 @@ def main():
     os.makedirs(MEDIA, exist_ok=True)
     for name, fn in TEXTURES.items():
         write_tga(os.path.join(MEDIA, name), fn())
-        print("wrote", os.path.join("Podium", "Media", name))
+        print("wrote", os.path.join("BigPodium", "Media", name))
 
 
 if __name__ == "__main__":

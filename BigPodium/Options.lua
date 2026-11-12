@@ -1,7 +1,7 @@
 local ADDON, ns = ...
 local L = ns.L
 
-local VAR_PREFIX = "PODIUM_"
+local VAR_PREFIX = "BIGPODIUM_"
 
 -- Settings panel (Esc > Options > AddOns > Podium) --------------------------
 
@@ -145,16 +145,16 @@ function ns:HandleSlash(msg)
     end
 end
 
-SLASH_PODIUM1 = "/mvp"
-SLASH_PODIUM2 = "/podium"
-SLASH_PODIUM3 = "/시상식"
-SlashCmdList.PODIUM = function(msg)
+SLASH_BIGPODIUM1 = "/mvp"
+SLASH_BIGPODIUM2 = "/bigpodium"
+SLASH_BIGPODIUM3 = "/시상식"
+SlashCmdList.BIGPODIUM = function(msg)
     ns:HandleSlash(msg)
 end
 
 -- Addon compartment (the addon list button by the minimap) ------------------
 
-function Podium_OnAddonCompartmentClick(_, mouseButton)
+function BigPodium_OnAddonCompartmentClick(_, mouseButton)
     if mouseButton == "RightButton" then
         ns:OpenOptions()
     else
@@ -162,7 +162,7 @@ function Podium_OnAddonCompartmentClick(_, mouseButton)
     end
 end
 
-function Podium_OnAddonCompartmentEnter(_, menuButtonFrame)
+function BigPodium_OnAddonCompartmentEnter(_, menuButtonFrame)
     if not GameTooltip then
         return
     end
@@ -175,7 +175,7 @@ function Podium_OnAddonCompartmentEnter(_, menuButtonFrame)
     GameTooltip:Show()
 end
 
-function Podium_OnAddonCompartmentLeave()
+function BigPodium_OnAddonCompartmentLeave()
     if GameTooltip then
         GameTooltip:Hide()
     end

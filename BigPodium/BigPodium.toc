@@ -1,13 +1,13 @@
 ## Interface: 16001
-## Title: Podium |cffffd100(시상식)|r
+## Title: Big Podium
 ## Notes: Award ceremony after a dungeon clear: MVP, Play of the Game and more, from the built-in damage meter.
 ## Notes-koKR: 던전을 클리어하면 미터기 기록으로 MVP·최고의 플레이(POTG) 시상식을 보여 줍니다.
-## Version: 1.3.0
-## IconTexture: Interface\AddOns\Podium\Media\icon
-## SavedVariables: PodiumDB
-## AddonCompartmentFunc: Podium_OnAddonCompartmentClick
-## AddonCompartmentFuncOnEnter: Podium_OnAddonCompartmentEnter
-## AddonCompartmentFuncOnLeave: Podium_OnAddonCompartmentLeave
+## Version: 1.3.1
+## IconTexture: Interface\AddOns\BigPodium\Media\icon
+## SavedVariables: BigPodiumDB
+## AddonCompartmentFunc: BigPodium_OnAddonCompartmentClick
+## AddonCompartmentFuncOnEnter: BigPodium_OnAddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: BigPodium_OnAddonCompartmentLeave
 
 Locale.lua
 Meter.lua

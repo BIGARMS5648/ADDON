@@ -1,5 +1,5 @@
--- Behavior tests for Podium against tests/wow_mock.lua.
--- Run with: python3 tests/run_tests.py Podium
+-- Behavior tests for Big Podium against tests/wow_mock.lua.
+-- Run with: python3 tests/run_tests.py BigPodium
 
 local mock = _G.mock
 local ns = _G.ns
@@ -135,7 +135,7 @@ local function journal(instance, bosses)
 end
 
 local function run()
-    return PodiumDB.current
+    return BigPodiumDB.current
 end
 
 local function shown()
@@ -158,10 +158,10 @@ local function reset()
     assert(not ns:IsQueued(), "a ceremony was left waiting")
     ns.Ceremony:Hide()
     for k, v in pairs(ns.DEFAULTS) do
-        PodiumDB[k] = v
+        BigPodiumDB[k] = v
     end
-    PodiumDB.current = nil
-    PodiumDB.history = {}
+    BigPodiumDB.current = nil
+    BigPodiumDB.history = {}
     mock.meter.sessions = {}
     mock.meter.secret = false
     mock.meter.available = true
@@ -179,32 +179,32 @@ local function reset()
     mock.raidSize = nil
     ns.Models:Forget()
     ns.Tracker:Reset()
-    PodiumDB.records = {}
+    BigPodiumDB.records = {}
     joinParty(true)
 end
 
 -- boot ----------------------------------------------------------------------------
 
 test("loads with defaults, options and slash commands", function()
-    PodiumDB = { everyBoss = true, modelOffset = -40 } -- saved by 1.0 / 1.2.1
-    mock.fire("ADDON_LOADED", "Podium")
+    BigPodiumDB = { everyBoss = true, modelOffset = -40 } -- saved by 1.0 / 1.2.1
+    mock.fire("ADDON_LOADED", "BigPodium")
     mock.fire("PLAYER_LOGIN")
     mock.fire("PLAYER_ENTERING_WORLD", true, false)
     mock.flushTimers()
-    assert(PodiumDB and PodiumDB.enabled, "db")
-    eq(PodiumDB.autoClose, 60, "auto close default")
+    assert(BigPodiumDB and BigPodiumDB.enabled, "db")
+    eq(BigPodiumDB.autoClose, 60, "auto close default")
     assert(mock.registeredCategory, "settings category")
-    assert(mock.settings.PODIUM_scale and mock.settings.PODIUM_onLeave, "settings registered")
-    eq(mock.settings.PODIUM_everyBoss, nil, "per-boss ceremony option removed")
-    eq(PodiumDB.everyBoss, nil, "old saved setting dropped")
-    eq(PodiumDB.modelOffset, 0, "1.2.1's -40 is the new 0")
-    eq(PodiumDB.dbVersion, 3, "settings version")
+    assert(mock.settings.BIGPODIUM_scale and mock.settings.BIGPODIUM_onLeave, "settings registered")
+    eq(mock.settings.BIGPODIUM_everyBoss, nil, "per-boss ceremony option removed")
+    eq(BigPodiumDB.everyBoss, nil, "old saved setting dropped")
+    eq(BigPodiumDB.modelOffset, 0, "1.2.1's -40 is the new 0")
+    eq(BigPodiumDB.dbVersion, 3, "settings version")
     eq(ns.Migrate({ dbVersion = 2, modelOffset = 6 }).modelOffset, 0, "1.2.2's +6 is the new 0")
     eq(ns.Migrate({ dbVersion = 2, modelOffset = 10 }).modelOffset, 4, "other values keep their look")
     eq(ns.Migrate({ dbVersion = 2, modelOffset = 0 }).modelOffset, 0, "never moved: 0")
     eq(ns.Migrate({ dbVersion = 3, modelOffset = 6 }).modelOffset, 6, "current settings untouched")
-    eq(mock.settings.PODIUM_autoClose.options.formatter(0), L.NEVER, "slider label")
-    assert(SlashCmdList.PODIUM and SLASH_PODIUM1 == "/mvp", "slash")
+    eq(mock.settings.BIGPODIUM_autoClose.options.formatter(0), L.NEVER, "slider label")
+    assert(SlashCmdList.BIGPODIUM and SLASH_BIGPODIUM1 == "/mvp", "slash")
     assert(printed(L.LOADED), "welcome message")
     eq(run(), nil, "no run outside dungeons")
 end)
@@ -414,7 +414,7 @@ test("leaving without a boss kill: no ceremony; next dungeon archives the run", 
     ns:Harvest()
     eq(#old.order, 1, "fights outside don't count")
     enter()
-    eq(PodiumDB.history[1], old, "archived")
+    eq(BigPodiumDB.history[1], old, "archived")
     assert(run() ~= old, "new run")
 end)
 
@@ -431,7 +431,7 @@ end)
 
 test("no ceremony for bosses before the last one (old per-boss setting is gone)", function()
     reset()
-    PodiumDB.everyBoss = true -- saved by 1.0; ignored now
+    BigPodiumDB.everyBoss = true -- saved by 1.0; ignored now
     local inst = enter()
     journal(inst, { { "First", 701 }, { "Last", 702 } })
     pull("Trash", 30, typical())
@@ -483,31 +483,31 @@ test("reload after the ceremony keeps the run; a new visit starts a new one", fu
     mock.instance = inst
     mock.fire("PLAYER_ENTERING_WORLD", false, false)
     assert(run() ~= r, "new run after a clear")
-    eq(PodiumDB.history[1], r, "old run archived")
+    eq(BigPodiumDB.history[1], r, "old run archived")
 end)
 
 test("raids can be left out", function()
     reset()
-    PodiumDB.raids = false
+    BigPodiumDB.raids = false
     enter({ name = "Molten Core", type = "raid", mapID = 409 })
     eq(run(), nil, "no run")
-    PodiumDB.raids = true
+    BigPodiumDB.raids = true
     enter({ name = "Molten Core", type = "raid", mapID = 409 })
     assert(run(), "run")
 end)
 
 test("disabled: no ceremony, still recorded", function()
     reset()
-    SlashCmdList.PODIUM("off")
-    eq(PodiumDB.enabled, false, "off")
+    SlashCmdList.BIGPODIUM("off")
+    eq(BigPodiumDB.enabled, false, "off")
     enter()
     pull("Trash", 30, typical())
     mock.fire("LFG_COMPLETION_REWARD")
     mock.flushTimers()
     assert(not shown(), "nothing shown")
     eq(#run().order, 1, "recorded")
-    SlashCmdList.PODIUM("on")
-    eq(PodiumDB.enabled, true, "on")
+    SlashCmdList.BIGPODIUM("on")
+    eq(BigPodiumDB.enabled, true, "on")
 end)
 
 test("damage meter unavailable", function()
@@ -639,7 +639,7 @@ test("award categories", function()
     eq(byID.FLOOR, "사냥꾼", "floor")
     eq(byID.DEATHS, "사냥꾼", "deaths")
     eq(#rep.awards, 8, "all eight that apply")
-    PodiumDB.fun = false
+    BigPodiumDB.fun = false
     rep = build({ { name = "Pull", dur = 40, stats = stats } })
     for _, award in ipairs(rep.awards) do
         assert(award.id ~= "FLOOR" and award.id ~= "DEATHS", "no joke awards")
@@ -841,7 +841,7 @@ end)
 
 test("outside-the-meter awards and score", function()
     reset()
-    PodiumDB.fun = true
+    BigPodiumDB.fun = true
     local inst = enter()
     journal(inst, { { "Boss", 990 } })
     for i = 1, 5 do
@@ -950,7 +950,7 @@ end
 test("preview: reveal, skip and contents", function()
     reset()
     mock.units.player.name = "나"
-    SlashCmdList.PODIUM("test")
+    SlashCmdList.BIGPODIUM("test")
     assert(shown(), "shown")
     local f = frame()
     local mvp = f.slots[1]
@@ -1037,7 +1037,7 @@ end)
 
 test("each player's own character emotes for their result", function()
     reset()
-    PodiumDB.fun = false
+    BigPodiumDB.fun = false
     local inst = enter()
     journal(inst, { { "Boss", 901 } })
     -- 3 interrupts in total make the rogue interrupt king, but no single
@@ -1203,7 +1203,7 @@ test("characters stand on their step; the MVP is bigger; adjustable", function()
     eq(STEPS[2].height, 232, "others unchanged")
     assert(mvp.feet + mvp.visible <= 500 - 92 - 6, "MVP stays below the header")
     ns.Ceremony:Hide()
-    PodiumDB.modelSize, PodiumDB.modelOffset = 120, 10
+    BigPodiumDB.modelSize, BigPodiumDB.modelOffset = 120, 10
     ns:ShowDemo()
     ns.Ceremony:Skip()
     side = frame().slots[2].model
@@ -1212,8 +1212,8 @@ test("characters stand on their step; the MVP is bigger; adjustable", function()
     assert(math.abs(feet - (STEPS[2].step + 10)) < 0.01, "moved up 10")
     mvp = frame().slots[1].geometry
     assert(mvp.feet + mvp.visible <= 500 - 92 - 6 + 0.01, "MVP still below the header at 120%")
-    assert(mock.settings.PODIUM_modelSize and mock.settings.PODIUM_modelOffset, "settings")
-    eq(mock.settings.PODIUM_modelOffset.default, 0, "default 0")
+    assert(mock.settings.BIGPODIUM_modelSize and mock.settings.BIGPODIUM_modelOffset, "settings")
+    eq(mock.settings.BIGPODIUM_modelOffset.default, 0, "default 0")
 end)
 
 test("stage effects: 3D steps, stage lights, confetti", function()
@@ -1246,17 +1246,17 @@ test("stage effects: 3D steps, stage lights, confetti", function()
     eq(f.slots[2].ao.shown, true, "2nd place shaded by the MVP's step")
     eq(f.slots[1].ao.shown, false, "nothing taller than the MVP")
     ns.Ceremony:Hide()
-    PodiumDB.confetti = false
+    BigPodiumDB.confetti = false
     ns:ShowDemo()
     ns.Ceremony:Skip()
     update(1)
     eq(f.confettiOn, false, "confetti off")
-    assert(mock.settings.PODIUM_confetti, "option")
+    assert(mock.settings.BIGPODIUM_confetti, "option")
 end)
 
 test("characters can be turned off", function()
     reset()
-    PodiumDB.models = false
+    BigPodiumDB.models = false
     ns:ShowDemo()
     ns.Ceremony:Skip()
     for _, slot in ipairs(frame().slots) do
@@ -1267,7 +1267,7 @@ test("characters can be turned off", function()
     end
     meetParty()
     eq(next(ns.Models.cache), nil, "nothing kept while off")
-    assert(mock.settings.PODIUM_models, "option in the settings")
+    assert(mock.settings.BIGPODIUM_models, "option in the settings")
 end)
 
 test("characters turn toward the MVP", function()
@@ -1316,7 +1316,7 @@ end)
 
 test("auto close counts down, pauses under the mouse", function()
     reset()
-    PodiumDB.autoClose = 5
+    BigPodiumDB.autoClose = 5
     ns:ShowDemo()
     local f = frame()
     ns.Ceremony:Skip()
@@ -1333,8 +1333,8 @@ end)
 
 test("animation runs many frames without errors; scale and dim options", function()
     reset()
-    PodiumDB.scale = 80
-    PodiumDB.dim = false
+    BigPodiumDB.scale = 80
+    BigPodiumDB.dim = false
     ns:ShowDemo()
     update(12, 1 / 60)
     eq(frame().scale, 0.8, "scale")
@@ -1351,38 +1351,38 @@ test("share posts to group chat, or prints when alone", function()
     assert(mock.chat[1].msg:find(L.TITLE_DEMO, 1, true), "title in first line")
     solo()
     mock.chat = {}
-    SlashCmdList.PODIUM("share")
+    SlashCmdList.BIGPODIUM("share")
     eq(#mock.chat, 0, "nothing sent alone")
     assert(printed(L.SHARE_SOLO), "printed instead")
 end)
 
 test("slash commands and history", function()
     reset()
-    SlashCmdList.PODIUM("")
+    SlashCmdList.BIGPODIUM("")
     assert(printed(L.NO_RUN:sub(1, 10)), "no run yet")
-    SlashCmdList.PODIUM("help")
+    SlashCmdList.BIGPODIUM("help")
     assert(printed("/mvp test"), "help")
-    PodiumDB.keep = 3
+    BigPodiumDB.keep = 3
     for i = 1, 5 do
         enter()
         pull("Trash " .. i, 30, typical())
         leave()
     end
     enter()
-    eq(#PodiumDB.history, 3, "history capped")
+    eq(#BigPodiumDB.history, 3, "history capped")
     mock.printed = {}
-    SlashCmdList.PODIUM("history")
+    SlashCmdList.BIGPODIUM("history")
     assert(printed("죽음의 폐광"), "history listed")
-    SlashCmdList.PODIUM("history 2")
+    SlashCmdList.BIGPODIUM("history 2")
     assert(shown(), "old run shown")
-    SlashCmdList.PODIUM("debug")
+    SlashCmdList.BIGPODIUM("debug")
     assert(printed("damage meter:"), "debug")
-    SlashCmdList.PODIUM("history clear")
-    eq(#PodiumDB.history, 0, "cleared")
-    Podium_OnAddonCompartmentClick(nil, "RightButton")
+    SlashCmdList.BIGPODIUM("history clear")
+    eq(#BigPodiumDB.history, 0, "cleared")
+    BigPodium_OnAddonCompartmentClick(nil, "RightButton")
     eq(mock.openedCategory, 42, "options opened")
-    Podium_OnAddonCompartmentEnter(nil, UIParent)
-    Podium_OnAddonCompartmentLeave()
+    BigPodium_OnAddonCompartmentEnter(nil, UIParent)
+    BigPodium_OnAddonCompartmentLeave()
 end)
 
 -- run ----------------------------------------------------------------------------

@@ -4,7 +4,7 @@ local L = ns.L
 --------------------------------------------------------------------------
 -- The ceremony window
 --
---   header:  DUNGEON CLEAR / title / dungeon, time, bosses, deaths
+--   header:  DUNGEON CLEAR / title (dungeon, time, bosses, deaths at the bottom)
 --   stage:   the party's own characters on a podium, MVP in the middle on
 --            the highest step, each playing an emote that fits their result
 --            (MVP flexes, award winners cheer / roar / bow / salute, the
@@ -587,13 +587,9 @@ local function CreateHeader(parent)
     header.glow:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
     header.glow:SetAlpha(0.22)
     header.tag = Text(header, 11, { 0.85, 0.66, 0.3 })
-    header.tag:SetPoint("TOP", 0, -14)
+    header.tag:SetPoint("TOP", 0, -18)
     header.title = Text(header, 30, GOLD, "OUTLINE")
-    header.title:SetPoint("TOP", 0, -30)
-    header.sub = Text(header, 13, { 0.82, 0.82, 0.82 })
-    header.sub:SetPoint("TOP", 0, -70)
-    header.sub:SetWidth(WIDTH - 60)
-    header.sub:SetWordWrap(false)
+    header.title:SetPoint("TOP", 0, -36)
     header.starL = Tex(header, "ARTWORK", 1, "star", 40)
     header.starL:SetPoint("RIGHT", header.title, "LEFT", -12, 0)
     header.starL:SetVertexColor(GOLD[1], GOLD[2], GOLD[3])
@@ -794,7 +790,7 @@ function Ceremony:Create()
     if frame then
         return frame
     end
-    frame = CreateFrame("Frame", "PodiumCeremonyFrame", UIParent)
+    frame = CreateFrame("Frame", "BigPodiumCeremonyFrame", UIParent)
     frame:SetSize(WIDTH, HEIGHT)
     frame:SetPoint("CENTER", 0, 20)
     frame:SetFrameStrata("FULLSCREEN_DIALOG")
@@ -822,7 +818,7 @@ function Ceremony:Create()
     frame:Hide()
     -- Esc closes it.
     if UISpecialFrames then
-        table.insert(UISpecialFrames, "PodiumCeremonyFrame")
+        table.insert(UISpecialFrames, "BigPodiumCeremonyFrame")
     end
 
     -- Darkens the rest of the screen (doesn't catch the mouse).
@@ -909,8 +905,14 @@ function Ceremony:Create()
         Ceremony:Share()
     end)
 
+    -- dungeon, time, bosses, deaths, wipes, record: along the bottom
+    frame.info = Text(frame, 13, { 0.85, 0.85, 0.85 }, nil, "LEFT")
+    frame.info:SetPoint("BOTTOMLEFT", 18, 36)
+    frame.info:SetPoint("RIGHT", frame.shareButton, "LEFT", -12, 0)
+    frame.info:SetWordWrap(false)
+
     frame.hint = Text(frame, 11, { 0.55, 0.55, 0.55 }, nil, "LEFT")
-    frame.hint:SetPoint("BOTTOMLEFT", 18, 20)
+    frame.hint:SetPoint("BOTTOMLEFT", 18, 16)
     return frame
 end
 
@@ -1292,7 +1294,7 @@ function Ceremony:Show(report)
     local header = frame.header
     header.tag:SetText(Spaced(report.tag))
     header.title:SetText(report.title)
-    header.sub:SetText(report.subtitle)
+    frame.info:SetText(report.subtitle)
     FillPotg(frame.potg, report.potg)
     frame.hint:SetText(L.HINT)
 
