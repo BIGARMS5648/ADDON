@@ -58,11 +58,13 @@ AOS 게임이 끝나면 나오는 **MVP / 최고의 플레이(POTG)** 화면, �
 
 각자의 **역할 기준**으로 비교합니다. **100 = 그 역할의 평균적인 활약**입니다.
 
-- **딜러** — 파티 전체 피해 중 내 비중
-- **힐러** — 파티 전체 치유 중 내 비중 (80%) + 피해 비중 (20%)
-- **탱커** — 파티가 받은 피해 중 내 비중 (50%) + 피해 비중 (50%)
-- 보너스: 차단·해제 1회당 **+2** (최대 +20), 탱커가 어그로를 안정적으로 잡고 있던 비율에 따라 최대 **+10**
-- 감점: 사망 1회당 **-12** (최대 -48), 피할 수 있는 피해 비중만큼 최대 **-20**, 탱커가 아닌데 몹이 달려든 횟수 1번당 **-2** (최대 -10)
+- **딜러** — 딜러 평균 피해와 비교 (탱커 피해량에 휘둘리지 않게 딜러끼리 비교)
+- **힐러** — 파티 전체 치유 중 내 비중 (80%) + 딜러 평균 대비 피해 (20%)
+- **탱커** — 파티가 받은 피해 중 내 비중 (50%) + 딜러 평균 대비 피해 (50%, 딜러 평균의 90%가 보통)
+- 탱커·힐러처럼 그 역할이 한 명뿐이면 비교 대상이 없어서, 100에서 벗어난 만큼의 절반만 반영합니다.
+- 보너스: 차단·해제 1회당 **+1.5** (최대 +9), 힐러는 아무도 안 죽으면 **+5**, 탱커가 어그로를 90% 넘게 잡고 있으면 최대 **+4**
+- 감점: 사망 1회당 **-12** (최대 -48), 피할 수 있는 피해 비중만큼 최대 **-20**, 탱커가 어그로를 자주 놓치면 최대 **-10**, 탱커가 아닌데 몹이 달려든 횟수 1번당 **-2** (최대 -10)
+- 그래서 보통 파티라면 MVP가 탱커·힐러·딜러에게 고르게 돌아갑니다. 탱커가 딜러보다 피해까지 많이 하면 탱커가 MVP!
 - 역할은 던전 찾기 역할을 쓰고, 없으면 기록으로 자동 판단합니다.
 
 ---
@@ -189,11 +191,13 @@ The game only shows a player's appearance while they're near you, so BIG PODIUM 
 
 Everyone is compared with what their **role** usually does: **100 = typical for the role**.
 
-- **Damage**: share of the party's damage
-- **Healer**: share of the party's healing (80%) + damage (20%)
-- **Tank**: share of the damage the party took (50%) + damage (50%)
-- Bonus: **+2** per interrupt or dispel (up to +20), up to **+10** for a tank holding aggro
-- Penalty: **-12** per death (up to -48), up to **-20** for avoidable damage, **-2** each time a mob turns on a non-tank (up to -10)
+- **Damage**: damage compared with the average damage dealer (a tank's damage doesn't skew it)
+- **Healer**: share of the party's healing (80%) + damage against the average damage dealer (20%)
+- **Tank**: share of the damage the party took (50%) + damage against the average damage dealer (50%, 90% of it is typical)
+- A role with one player (tank, healer) has no one to be compared with, so only half of its distance from 100 counts.
+- Bonus: **+1.5** per interrupt or dispel (up to +9), **+5** for the healer when nobody died, up to **+4** for a tank holding aggro over 90% of the time
+- Penalty: **-12** per death (up to -48), up to **-20** for avoidable damage, up to **-10** for a tank who keeps losing aggro, **-2** each time a mob turns on a non-tank (up to -10)
+- So in a normal group MVP goes around tanks, healers and damage dealers; a tank who also out-damages the damage dealers takes it.
 - Roles come from the group finder, or are worked out from the numbers.
 
 ### 🏅 20+ awards

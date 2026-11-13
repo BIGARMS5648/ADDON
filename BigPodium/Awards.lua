@@ -7,15 +7,22 @@ local L = ns.L
 -- MVP "impact": each player is compared with what their role usually does
 -- in a group like this one, so 100 = a typical tank / healer / damage
 -- dealer and the winner is whoever did best for their role.
---   damage dealer: share of the party's damage
---   healer:        share of the party's healing (80%) + damage (20%)
---   tank:          share of damage taken (50%) + damage (50%)
---   +2 per interrupt or dispel (up to +20), -12 per death (up to -48),
---   up to -20 for the party's avoidable damage taken.
+--   damage dealer: damage against the average damage dealer
+--   healer:        share of the party's healing (80%) + damage against
+--                  12% of the average damage dealer (20%)
+--   tank:          share of damage taken (50%) + damage against 90% of
+--                  the average damage dealer (50%)
+--   A role with one player (tank, healer) has nobody to be measured
+--   against, so only half of its distance from 100 counts.
+--   +1.5 per interrupt or dispel (up to +9), +5 for a healer when nobody
+--   died, up to +4 for a tank holding aggro over 90% of the time;
+--   -12 per death (up to -48), up to -20 for the party's avoidable damage
+--   taken, up to -10 for a tank losing aggro, -2 per mob on a non-tank.
 --
 -- Play of the Game: the single most outstanding moment of one fight -
--- carrying a fight's damage, healing much harder than usual, holding a
--- big pull, or a string of interrupts. Boss fights count more.
+-- carrying a fight's damage, healing or tanking a fight that hit much
+-- harder than similar fights (bosses against bosses), or a string of
+-- interrupts. Boss fights count more.
 --------------------------------------------------------------------------
 
 local Awards = {}
@@ -31,7 +38,14 @@ local DAMAGE_WEIGHT = { DAMAGER = 1, TANK = 0.55, HEALER = 0.1 }
 local HEAL_WEIGHT = { HEALER = 1, TANK = 0.04, DAMAGER = 0.01 }
 local TAKEN_WEIGHT = { TANK = 1, DAMAGER = 0.05, HEALER = 0.05 }
 
-local POTG_KIND_WEIGHT = { damage = 1, heal = 0.95, tank = 0.85, interrupts = 0.9 }
+local POTG_KIND_WEIGHT = { damage = 1, heal = 1, tank = 0.92, interrupts = 0.9 }
+-- A typical tank's / healer's damage compared with an average damage dealer's.
+local TANK_DAMAGE_RATIO = 0.9
+local HEALER_DAMAGE_RATIO = 0.12
+-- A role with one player (the tank, the healer in a party) has nobody to be
+-- compared with, so how far its numbers stray from "typical" says less:
+-- that part of the score counts half.
+local LONE_ROLE_WEIGHT = 0.5
 local MIN_POTG_FIGHT = 8 -- seconds; shorter trash fights can't be the play of the game
 local MAX_AWARDS = 16
 
@@ -217,29 +231,58 @@ end
 
 function Awards.Score(list, totals)
     local wDamage, wHeal, wTaken = WeightSums(list, SelfRole)
+    -- Damage is compared with the average damage dealer, so a tank doing a
+    -- lot (or little) of the damage doesn't move the damage dealers' scores.
+    local dpsSum, dpsCount, roleCount = 0, 0, {}
+    for _, p in ipairs(list) do
+        roleCount[p.role] = (roleCount[p.role] or 0) + 1
+        if p.role == "DAMAGER" then
+            dpsSum, dpsCount = dpsSum + p.dmg, dpsCount + 1
+        end
+    end
+    local avgDps = dpsCount > 0 and dpsSum / dpsCount or 0
     for _, p in ipairs(list) do
         local role = p.role
-        local damageIndex = Index(p.dmg, totals.dmg, DAMAGE_WEIGHT[role], wDamage)
+        local function DamageVs(ratio)
+            local peers = role == "DAMAGER" and dpsCount >= 2 or role ~= "DAMAGER" and dpsCount >= 1
+            if peers and avgDps > 0 then
+                return min(3, p.dmg / (avgDps * ratio))
+            end
+            return Index(p.dmg, totals.dmg, DAMAGE_WEIGHT[role], wDamage)
+        end
         local healIndex = Index(p.heal, totals.heal, HEAL_WEIGHT[role], wHeal)
         local takenIndex = Index(p.taken, totals.taken, TAKEN_WEIGHT[role], wTaken)
         local base
         if role == "HEALER" and totals.heal > 0 then
-            base = 0.8 * healIndex + 0.2 * min(damageIndex, 1.5)
+            base = 0.8 * healIndex + 0.2 * min(DamageVs(HEALER_DAMAGE_RATIO), 1.5)
         elseif role == "TANK" and totals.taken > 0 then
-            base = 0.5 * min(takenIndex, 2) + 0.5 * damageIndex
+            base = 0.5 * min(takenIndex, 1.2) + 0.5 * min(DamageVs(TANK_DAMAGE_RATIO), 2)
         else
-            base = damageIndex
+            base = DamageVs(1)
+        end
+        if roleCount[role] == 1 and #list > 1 then
+            base = 1 + LONE_ROLE_WEIGHT * (base - 1)
         end
         local penalty = min(48, 12 * p.deaths)
         if totals.avoid > 0 and #list > 1 then
             penalty = penalty + 20 * p.avoid / totals.avoid
         end
-        -- outside the meter: a tank holding aggro, others pulling it
-        p.threatBonus = (role == "TANK" and p.hold) and Round(10 * min(1, max(0, (p.hold - 0.6) / 0.35))) or 0
+        -- outside the meter. Holding aggro is a tank's job: only very steady
+        -- holding earns a little, losing it often costs.
+        p.threatBonus, p.threatPenalty = 0, 0
+        if role == "TANK" and p.hold then
+            if p.hold >= 0.9 then
+                p.threatBonus = Round(4 * min(1, (p.hold - 0.9) / 0.08))
+            elseif p.hold < 0.75 then
+                p.threatPenalty = Round(10 * min(1, (0.75 - p.hold) / 0.25))
+            end
+        end
         p.aggroPenalty = role ~= "TANK" and min(10, 2 * (p.aggro or 0)) or 0
+        -- a healer's job is that nobody dies
+        p.safeBonus = (role == "HEALER" and #list > 1 and totals.deaths == 0) and 5 or 0
         p.base = Round(100 * base)
-        p.bonus = min(20, 2 * (p.ints + p.disp)) + p.threatBonus
-        p.penalty = Round(penalty) + p.aggroPenalty
+        p.bonus = min(9, Round(1.5 * (p.ints + p.disp))) + p.threatBonus + p.safeBonus
+        p.penalty = Round(penalty) + p.aggroPenalty + p.threatPenalty
         p.score = max(0, p.base + p.bonus - p.penalty)
         p.dmgShare = totals.dmg > 0 and p.dmg / totals.dmg or 0
         p.healShare = totals.heal > 0 and p.heal / totals.heal or 0
@@ -287,12 +330,27 @@ end
 -- Finds the play of the game. Returns nil if no fight qualifies.
 function Awards.PlayOfTheGame(run, keys, players)
     local fightTotals, biggest = {}, 0
+    -- damage taken per second and healing per damage taken, for boss fights
+    -- and for the rest separately: a boss is compared with the other bosses
+    local sums = { boss = { taken = 0, time = 0, heal = 0 }, trash = { taken = 0, time = 0, heal = 0 }, all = { taken = 0, time = 0, heal = 0 } }
     for _, fkey in ipairs(keys) do
         local fight = run.fights[fkey]
         if fight then
-            fightTotals[fkey] = FightTotals(fight)
-            biggest = max(biggest, fightTotals[fkey].dmg)
+            local totals = FightTotals(fight)
+            fightTotals[fkey] = totals
+            biggest = max(biggest, totals.dmg)
+            for _, kind in ipairs({ fight.boss and "boss" or "trash", "all" }) do
+                local sum = sums[kind]
+                sum.taken, sum.time, sum.heal = sum.taken + totals.taken, sum.time + (fight.dur or 0), sum.heal + totals.heal
+            end
         end
+    end
+    local function Usual(fight)
+        local sum = sums[fight.boss and "boss" or "trash"]
+        if sum.time <= 0 or sum.taken <= 0 then
+            sum = sums.all
+        end
+        return sum.time > 0 and sum.taken / sum.time or 0, sum.taken > 0 and sum.heal / sum.taken or 0
     end
 
     local best
@@ -314,7 +372,18 @@ function Awards.PlayOfTheGame(run, keys, players)
                     fighters[#fighters + 1] = players[key]
                 end
             end
-            local wDamage = WeightSums(fighters, SelfRole)
+            local wDamage, wHeal, wTaken = WeightSums(fighters, SelfRole)
+            local dpsSum, dpsCount, roleCount = 0, 0, {}
+            for _, q in ipairs(fighters) do
+                roleCount[q.role] = (roleCount[q.role] or 0) + 1
+                if q.role == "DAMAGER" then
+                    dpsSum, dpsCount = dpsSum + (fight.p[q.key].dmg or 0), dpsCount + 1
+                end
+            end
+            local avgDps = dpsCount > 0 and dpsSum / dpsCount or 0
+            -- how hard the fight hit the party, compared with similar fights
+            local usualPressure, usualCover = Usual(fight)
+            local pressure = usualPressure > 0 and min(2.5, max(0.5, (totals.taken / duration) / usualPressure)) or 1
             local importance = fight.final and 1.5 or (fight.boss and 1.3 or 1)
             local size = biggest > 0 and (totals.dmg / biggest) ^ 0.25 or 1
             local length = min(1, duration / 15)
@@ -327,24 +396,41 @@ function Awards.PlayOfTheGame(run, keys, players)
                         return { kind = kind, value = value, key = key, fkey = fkey, index = index, player = p, stats = stats }
                     end
                     local dmg, heal, taken = stats.dmg or 0, stats.heal or 0, stats.taken or 0
+                    local lone = roleCount[p.role] == 1 and #fighters > 1
+                    local function Fair(value) -- a lone role's lead counts half
+                        return lone and 1 + LONE_ROLE_WEIGHT * (value - 1) or value
+                    end
                     if dmg > 0 and p.role ~= "HEALER" then
-                        local value = Index(dmg, totals.dmg, DAMAGE_WEIGHT[p.role], wDamage)
+                        -- carrying the fight's damage, against the average damage dealer
+                        local value
+                        if p.role == "DAMAGER" and dpsCount >= 2 then
+                            value = dmg / avgDps
+                        elseif p.role == "TANK" and dpsCount >= 1 and avgDps > 0 then
+                            value = dmg / (avgDps * TANK_DAMAGE_RATIO)
+                        else
+                            value = Index(dmg, totals.dmg, DAMAGE_WEIGHT[p.role], wDamage)
+                        end
+                        value = Fair(min(3, value))
                         Consider(weight * value * POTG_KIND_WEIGHT.damage, Info("damage", value))
                     end
+                    -- keeping everyone up through a fight that hit unusually hard
                     if heal > 0 and p.role == "HEALER" and p.time > 0 and p.heal > 0 then
-                        local burst = min(3, (heal / duration) / (p.heal / p.time))
-                        local value = burst * (totals.deaths == 0 and 1 or 0.75)
+                        local share = min(1.3, Index(heal, totals.heal, HEAL_WEIGHT[p.role], wHeal))
+                        -- and healed more of what came in than usual
+                        local cover = (usualCover > 0 and totals.taken > 0) and min(1.5, max(0.7, (totals.heal / totals.taken) / usualCover)) or 1
+                        local value = share * pressure * cover ^ 0.5 * (totals.deaths == 0 and 1 or 0.6)
                         local info = Info("heal", value)
-                        info.burst = burst
+                        info.burst = min(3, (heal / duration) / (p.heal / p.time))
                         Consider(weight * value * POTG_KIND_WEIGHT.heal, info)
                     end
-                    if taken > 0 and p.role == "TANK" and p.time > 0 and p.taken > 0 then
-                        local burst = min(3, (taken / duration) / (p.taken / p.time))
-                        local value = burst * ((stats.deaths or 0) == 0 and 1 or 0.4)
+                    -- holding the mobs through a fight that hit unusually hard
+                    if taken > 0 and p.role == "TANK" then
+                        local share = min(1.1, Index(taken, totals.taken, TAKEN_WEIGHT[p.role], wTaken))
+                        local value = share * pressure * ((stats.deaths or 0) == 0 and 1 or 0.4)
                         Consider(weight * value * POTG_KIND_WEIGHT.tank, Info("tank", value))
                     end
                     if (stats.ints or 0) >= 3 then
-                        local value = min(2.2, 0.6 + 0.2 * stats.ints)
+                        local value = min(1.6, 0.7 + 0.12 * stats.ints)
                         Consider(weight * value * POTG_KIND_WEIGHT.interrupts, Info("interrupts", value))
                     end
                 end

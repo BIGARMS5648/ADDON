@@ -566,11 +566,42 @@ test("impact: interrupts, dispels and deaths can swing the MVP", function()
     even[HEALER].disp = 10
     local rep = build({ { name = "Pull", dur = 40, stats = even } })
     eq(rep.mvp.name, PARTY[HEALER].name, "healer with many dispels")
-    eq(rep.mvp.bonus, 20, "bonus capped")
+    eq(rep.mvp.bonus, 9 + 5, "dispel bonus capped at 9, +5 because nobody died")
     local deaths = typical(1, { [ME] = { deaths = 3 } })
     rep = build({ { name = "Pull", dur = 40, stats = deaths } })
     assert(rep.mvp.name ~= "나", "dying three times costs the MVP")
     eq(playerIn(rep, ME).penalty, 36, "death penalty")
+end)
+
+test("balance: a tank doing typical damage doesn't take MVP from a better damage dealer", function()
+    reset()
+    -- tank does ~90% of an average damage dealer (22% of the party's damage);
+    -- 1.3 scored this tank about 125 and made it MVP
+    local stats = typical(1, { [ME] = { dmg = 340000 }, [ROGUE] = { dmg = 280000 }, [HUNTER] = { dmg = 250000 },
+        [TANK] = { dmg = 261000, ints = 2 } })
+    local rep = build({ { name = "Pull", dur = 40, stats = stats } })
+    eq(rep.mvp.name, "나", "the top damage dealer")
+    local tank = playerIn(rep, TANK)
+    assert(tank.score >= 95 and tank.score <= 112, "tank near typical: " .. tank.score)
+    -- a tank out-damaging everyone while tanking does earn it
+    stats[TANK].dmg = 420000
+    rep = build({ { name = "Pull", dur = 40, stats = stats } })
+    eq(rep.mvp.name, "탱커", "tank carrying the damage too")
+end)
+
+test("balance: a boss that simply hits harder isn't a healer's play of the game", function()
+    reset()
+    -- the healer heals in step with the damage coming in on every fight;
+    -- 1.3 gave the healer the play of the game for that alone
+    local boss = typical(1.6, { [ROGUE] = { dmg = 560000 } })
+    boss[TANK].taken, boss[HEALER].heal = 700000 * 1.8, 600000 * 1.8
+    local rep = build({
+        { name = "Trash", dur = 40, stats = typical(0.6) }, -- trash hits much softer than the boss
+        { name = "Trash", dur = 40, stats = typical(0.6) },
+        { name = "Boss", dur = 60, stats = boss, boss = "Boss", final = true },
+    })
+    eq(rep.potg.kind, "damage", "the damage carry")
+    eq(rep.potg.player.name, "도적", "rogue")
 end)
 
 test("roles are guessed when the group has none", function()
@@ -602,9 +633,12 @@ test("play of the game: a healer saving the last boss", function()
     local final = typical(1)
     final[HEALER].heal = 2400000
     final[TANK].taken = 1800000
+    -- the last boss hit far harder than the bosses before it, and the healer kept up
     local rep = build({
         { name = "Trash", dur = 40, stats = typical() },
+        { name = "Gatekeeper", dur = 60, stats = typical(1.4), boss = "Gatekeeper" },
         { name = "Trash", dur = 40, stats = typical() },
+        { name = "Foreman", dur = 60, stats = typical(1.4), boss = "Foreman" },
         { name = "Captain", dur = 60, stats = final, boss = "Captain", final = true },
     })
     eq(rep.potg.kind, "heal", "kind")
@@ -883,7 +917,7 @@ test("outside-the-meter awards and score", function()
     eq(byID.LUCKY, "도적", "dice god")
     eq(byID.UNLUCKY, "사냥꾼", "unlucky")
     local tank, rogue = playerIn(rep, TANK), playerIn(rep, ROGUE)
-    eq(tank.threatBonus, 10, "tank held aggro the whole time")
+    eq(tank.threatBonus, 4, "tank held aggro the whole time: the most there is")
     assert(rogue.aggroPenalty >= 4, "rogue pulled aggro: " .. rogue.aggroPenalty)
     eq(playerIn(rep, ME).aggroPenalty, 0, "no aggro, no penalty")
 end)
