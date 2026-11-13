@@ -185,6 +185,57 @@ function ns:HandleSlash(msg)
     elseif command == "debug" then
         ns.db.debug = not ns.db.debug
         ns.Print(ns.db.debug and L.DEBUG_ON or L.DEBUG_OFF)
+    elseif command == "pull" or command == "풀" then
+        local module = ns:GetModule("PullTimer")
+        if module and module.enabled then
+            module:Start(ns.Trim(args) ~= "" and tonumber(args) or nil)
+        end
+    elseif command == "errors" or command == "오류" then
+        local module = ns:GetModule("ErrorCatcher")
+        if module then
+            module:HandleCommand(args)
+        end
+    elseif command == "alts" or command == "chars" or command == "캐릭" then
+        local module = ns:GetModule("Gold")
+        if module then
+            module:ReportCharacters()
+        end
+    elseif command == "session" or command == "세션" then
+        local module = ns:GetModule("Gold")
+        if module then
+            module:ReportSession()
+        end
+    elseif command == "volume" or command == "vol" or command == "볼륨" then
+        local module = ns:GetModule("System")
+        if module then
+            module:HandleVolume(args)
+        end
+    elseif command == "cvar" then
+        local module = ns:GetModule("System")
+        if module then
+            module:HandleCVar(args)
+        end
+    elseif command == "home" or command == "집" then
+        ns.Print(L.HOME_LINE:format(GetBindLocation and GetBindLocation() or "?"))
+    elseif command == "ah" or command == "경매" then
+        local module = ns:GetModule("AuctionPrices")
+        if module then
+            module:HandleCommand(args)
+        end
+    elseif command == "buffs" or command == "버프" then
+        local module = ns:GetModule("BuffReminder")
+        if module then
+            module:HandleCommand(args)
+        end
+    elseif command == "nodes" or command == "채집" then
+        local module = ns:GetModule("Gathering")
+        if module then
+            if args:lower() == "clear" then
+                module:Clear()
+            else
+                ns.Print(L.NODES_COUNT:format(#ns.db.nodes))
+            end
+        end
     elseif command == "rl" or command == "reload" then
         local ok = pcall(ReloadUI)
         if not ok then

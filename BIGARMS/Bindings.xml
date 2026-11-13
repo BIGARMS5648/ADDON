@@ -1,0 +1,8 @@
+<Bindings>
+  <Binding name="BIGARMS_OPTIONS" category="BIGARMS">BIGARMS_Keybind("options")</Binding>
+  <Binding name="BIGARMS_CHATCOPY" category="BIGARMS">BIGARMS_Keybind("chatcopy")</Binding>
+  <Binding name="BIGARMS_PULL" category="BIGARMS">BIGARMS_Keybind("pull")</Binding>
+  <Binding name="BIGARMS_WAYCLEAR" category="BIGARMS">BIGARMS_Keybind("wayclear")</Binding>
+  <Binding name="BIGARMS_ERRORS" category="BIGARMS">BIGARMS_Keybind("errors")</Binding>
+  <Binding name="BIGARMS_MINIMAP" category="BIGARMS">BIGARMS_Keybind("minimap")</Binding>
+</Bindings>

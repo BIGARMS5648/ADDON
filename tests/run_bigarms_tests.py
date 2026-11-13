@@ -39,7 +39,7 @@ def toc_files():
 
 
 def check_locale(files):
-    code = "\n".join(read(os.path.join(ADDON_DIR, n)) for n in files if not n.endswith("Locale.lua"))
+    code = "\n".join(read(os.path.join(ADDON_DIR, n)) for n in files if n.endswith(".lua") and not n.endswith("Locale.lua"))
     locale = read(os.path.join(ADDON_DIR, "Core/Locale.lua"))
     used = set(re.findall(r"\bL\.([A-Z][A-Z0-9_]*)", code))
     used |= set(re.findall(r'(?:label|tooltip|text) = "([A-Z][A-Z0-9_]*)"', code))
@@ -47,10 +47,12 @@ def check_locale(files):
     for name in re.findall(r'NewModule\("([A-Za-z]+)"', code):
         used.add("MOD_" + name)
         used.add("MOD_" + name + "_DESC")
-    for group in re.findall(r'"(AUTOMATION|CHAT|TOOLTIP|MINIMAP|INTERFACE|ITEMS|QUEST|COMBAT|MAP|SYSTEM)"', code):
+    for group in re.findall(r'group = "([A-Z]+)"', code):
         used.add("GROUP_" + group)
     for button in re.findall(r'button = "([A-Z]+)"', code):
         used.add("BUTTON_" + button)
+    for key in re.findall(r'ns\.L\.([A-Z][A-Z0-9_]*)', code):
+        used.add(key)
     split = locale.index('if GetLocale() == "koKR"')
     english = set(re.findall(r"^L\.([A-Za-z0-9_]+) = ", locale[:split], re.M))
     korean = set(re.findall(r"^\s+L\.([A-Za-z0-9_]+) = ", locale[split:], re.M))
@@ -93,7 +95,7 @@ def run(locale):
         }
         setmetatable(_G, {
             __newindex = function(t, k, v)
-                if not allowed[k] and not tostring(k):find("^BIGARMS") then
+                if not allowed[k] and not tostring(k):find("^BIGARMS") and not tostring(k):find("^BINDING_") and not tostring(k):find("^SLASH_BIGARMS") then
                     error("addon created global '" .. tostring(k) .. "'", 2)
                 end
                 rawset(t, k, v)
@@ -112,6 +114,8 @@ def run(locale):
         if not os.path.exists(path):
             print(f"TOC lists a missing file: {name}")
             return 1
+        if name.endswith(".xml"):
+            continue
         run_chunk(read(path), f"{ADDON}/{name}", ADDON, ns)
 
     failed = run_chunk(read(os.path.join(TESTS, "test_bigarms.lua")), "tests/test_bigarms.lua")

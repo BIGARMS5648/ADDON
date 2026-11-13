@@ -51,7 +51,7 @@ test("loads, creates the database and enables default modules", function()
     mock.flushTimers()
     assert(BIGARMSDB and BIGARMSDB.modules, "account db")
     assert(BIGARMSCharDB and BIGARMSCharDB.junkIgnore, "character db")
-    eq(#ns.modules, 28, "module count")
+    eq(#ns.modules, 49, "module count")
     local on, off = 0, 0
     for _, module in ipairs(ns.modules) do
         assert(module.db, "module db " .. module.name)
@@ -733,6 +733,522 @@ test("reset puts everything back to defaults", function()
     eq(ns:GetModule("Durability").db.threshold, 20, "default restored")
     assert(ns:GetModule("AutoRepair").enabled, "default modules on")
     noErrors()
+end)
+
+-- loot ---------------------------------------------------------------------------------------------
+
+test("auto roll decides by quality and leaves bind-on-pickup alone", function()
+    local roll = ns:GetModule("AutoRoll")
+    eq(roll:Decide(0, false, true, true), 2, "grey -> greed")
+    eq(roll:Decide(2, false, true, true), nil, "green kept by default")
+    roll.db.uncommon = "NEED"
+    eq(roll:Decide(2, false, false, true), 2, "need not allowed -> greed")
+    eq(roll:Decide(2, false, false, false), 0, "nothing allowed -> pass")
+    eq(roll:Decide(3, true, true, true), nil, "bop skipped")
+    roll.db.skipBoP = false
+    roll.db.rare = "PASS"
+    eq(roll:Decide(3, true, true, true), 0, "rare -> pass")
+    roll.db.skipBoP, roll.db.uncommon, roll.db.rare = true, "KEEP", "KEEP"
+
+    ns:SetModuleEnabled("AutoRoll", true)
+    mock.reset()
+    mock.rolls[7] = { name = "Grey Thing", quality = 0, bop = false }
+    mock.fire("START_LOOT_ROLL", 7, 60000)
+    mock.flushTimers()
+    eq(mock.count("RollOnLoot"), 1, "rolled")
+    eq(mock.calls.RollOnLoot[1][2], 2, "greed")
+    ns:SetModuleEnabled("AutoRoll", false)
+    noErrors()
+end)
+
+test("loot confirm answers bind and roll popups", function()
+    ns:SetModuleEnabled("LootConfirm", true)
+    mock.reset()
+    mock.fire("LOOT_BIND_CONFIRM", 3)
+    eq(mock.calls.ConfirmLootSlot[1][1], 3, "slot confirmed")
+    mock.fire("CONFIRM_LOOT_ROLL", 9, 1)
+    eq(mock.calls.ConfirmLootRoll[1][2], 1, "roll confirmed")
+    ns:SetModuleEnabled("LootConfirm", false)
+end)
+
+test("loot announce only for my loot of the chosen quality", function()
+    ns:SetModuleEnabled("LootAnnounce", true)
+    mock.inGroup = true
+    mock.reset()
+    local blue = item(5001, 3, 100)
+    local green = item(5002, 2, 100)
+    mock.fire("CHAT_MSG_LOOT", "You receive loot: " .. blue .. ".", "빅암", "", "", "빅암-Forever")
+    eq(mock.count("SendChatMessage"), 1, "announced")
+    assert(mock.calls.SendChatMessage[1][1]:find("Item5001"), "link in message")
+    mock.fire("CHAT_MSG_LOOT", "You receive loot: " .. green .. ".", "빅암", "", "", "빅암")
+    eq(mock.count("SendChatMessage"), 1, "green below threshold")
+    mock.fire("CHAT_MSG_LOOT", "Bob receives loot: " .. blue .. ".", "Bob", "", "", "Bob")
+    eq(mock.count("SendChatMessage"), 1, "other people's loot ignored")
+    mock.inGroup = false
+    ns:SetModuleEnabled("LootAnnounce", false)
+    noErrors()
+end)
+
+test("rare alert fires once per mob", function()
+    mock.reset()
+    mock.raidNotices = {}
+    mock.units.target = { name = "Hogger", guid = "Creature-0-1", classification = "rare", level = 11 }
+    mock.fire("PLAYER_TARGET_CHANGED")
+    eq(#mock.raidNotices, 1, "alerted")
+    assert(mock.raidNotices[1]:find("Hogger") and mock.raidNotices[1]:find("11"), "name and level")
+    mock.fire("PLAYER_TARGET_CHANGED")
+    eq(#mock.raidNotices, 1, "not twice")
+    mock.units.target = { name = "Boar", guid = "Creature-0-2", classification = "normal" }
+    mock.fire("PLAYER_TARGET_CHANGED")
+    eq(#mock.raidNotices, 1, "normal mobs ignored")
+    mock.units.target = nil
+    noErrors()
+end)
+
+-- group ------------------------------------------------------------------------------------------------
+
+test("pull timer counts down in chat and on screen", function()
+    local pull = ns:GetModule("PullTimer")
+    mock.reset()
+    mock.inGroup = false
+    pull:Start(3)
+    assert(printed("3"), "start announced to me when solo")
+    mock.tick()
+    mock.tick()
+    mock.tick()
+    assert(printed(ns.L.PT_GO), "go")
+    assert(not pull.remaining, "finished")
+
+    mock.inGroup = true
+    mock.reset()
+    pull:Start(5)
+    eq(mock.count("DoCountdown"), 1, "built-in countdown in a group")
+    pull.db.builtin = false
+    mock.reset()
+    pull:Start(5)
+    eq(mock.calls.SendChatMessage[1][2], "PARTY", "own countdown to party")
+    pull:Cancel()
+    pull.db.builtin = true
+    mock.inGroup = false
+    assert(SlashCmdList["BIGARMS_PULL"], "/pull registered")
+    noErrors()
+end)
+
+test("group tools: ready check, battleground entry, roster changes", function()
+    local tools = ns:GetModule("GroupTools")
+    mock.reset()
+    mock.fire("READY_CHECK", "Leader", 30)
+    eq(mock.count("ConfirmReadyCheck"), 0, "off by default")
+    assert(#mock.sounds > 0, "sound played")
+    tools.db.readyCheck = true
+    mock.fire("READY_CHECK", "Leader", 30)
+    eq(mock.calls.ConfirmReadyCheck[1][1], true, "answered")
+    tools.db.readyCheck = false
+
+    tools.db.bgQueue = true
+    mock.battlefield[1] = { status = "confirm", map = "Warsong Gulch" }
+    mock.fire("UPDATE_BATTLEFIELD_STATUS", 1)
+    eq(mock.count("AcceptBattlefieldPort"), 1, "entered")
+    tools.db.bgQueue = false
+
+    mock.inGroup = true
+    mock.groupMembers = { "Alice", "me" }
+    mock.units.party1 = { name = "Alice" }
+    mock.reset()
+    mock.fire("GROUP_ROSTER_UPDATE")
+    assert(printed("Alice"), "join printed")
+    mock.groupMembers = { "me" }
+    mock.units.party1 = nil
+    mock.reset()
+    mock.fire("GROUP_ROSTER_UPDATE")
+    assert(printed("Alice"), "leave printed")
+    mock.inGroup = false
+    noErrors()
+end)
+
+test("interrupt announce names the kicked target", function()
+    ns:SetModuleEnabled("InterruptAnnounce", true)
+    mock.inGroup = true
+    mock.units.target = { name = "Caster", guid = "Creature-0-9", hostile = true }
+    mock.units.playertarget = mock.units.target
+    mock.reset()
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 1766)
+    eq(mock.count("SendChatMessage"), 1, "announced")
+    assert(mock.calls.SendChatMessage[1][1]:find("Caster"), "target named")
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 2366)
+    eq(mock.count("SendChatMessage"), 1, "other spells ignored")
+    mock.units.target, mock.units.playertarget = nil, nil
+    mock.inGroup = false
+    ns:SetModuleEnabled("InterruptAnnounce", false)
+end)
+
+-- nameplates / action bars ---------------------------------------------------------------------------------
+
+test("nameplates: quest progress icon and target glow", function()
+    eq(ns.QuestProgressFromTooltip({ { leftText = "Boar" }, { leftText = "Boars slain: 3/5" } }), "3/5", "count")
+    eq(ns.QuestProgressFromTooltip({ { leftText = "Boars slain: 5/5" } }), nil, "finished objective")
+    eq(ns.QuestProgressFromTooltip({ { leftText = "Collected: 40%" } }), "40%", "percent")
+    eq(ns.QuestProgressFromTooltip({ { leftText = "Level 5 Boar" } }), nil, "no quest")
+    mock.unitTooltips.nameplate1 = { { leftText = "Boar" }, { leftText = "Boars slain: 3/5" } }
+    local plate = mock.addPlate("nameplate1", { name = "Boar", guid = "Creature-0-3", classification = "normal" })
+    assert(plate.UnitFrame.bigarmsQuest and plate.UnitFrame.bigarmsQuest:IsShown(), "quest icon shown")
+    eq(plate.UnitFrame.bigarmsQuest.text:GetText(), "3/5", "progress text")
+    mock.units.target = mock.units.nameplate1
+    mock.plates.target = plate
+    mock.fire("PLAYER_TARGET_CHANGED")
+    assert(plate.UnitFrame.bigarmsGlow and plate.UnitFrame.bigarmsGlow:IsShown(), "glow on target")
+    mock.units.target = nil
+    mock.plates.target = nil
+    mock.fire("PLAYER_TARGET_CHANGED")
+    assert(not plate.UnitFrame.bigarmsGlow:IsShown(), "glow off")
+    mock.removePlate("nameplate1")
+    assert(not plate.UnitFrame.bigarmsQuest:IsShown(), "icon hidden on remove")
+    noErrors()
+end)
+
+test("nameplates: enemy plates only in combat", function()
+    local np = ns:GetModule("Nameplates")
+    mock.cvars.nameplateShowEnemies = "1"
+    np.db.combatOnly = true
+    np:SettingChanged("combatOnly", true)
+    mock.fire("PLAYER_REGEN_ENABLED")
+    eq(mock.cvars.nameplateShowEnemies, "0", "off out of combat")
+    mock.fire("PLAYER_REGEN_DISABLED")
+    eq(mock.cvars.nameplateShowEnemies, "1", "on in combat")
+    np.db.combatOnly = false
+end)
+
+test("action bars hide text and tint out of range icons", function()
+    local ab = ns:GetModule("ActionBars")
+    ab.db.hideHotkeys = true
+    ab:SettingChanged("hideHotkeys", true)
+    eq(ActionButton1.HotKey:GetAlpha(), 0, "hotkey hidden")
+    eq(ActionButton1.Name:GetAlpha(), 1, "name shown")
+    ab.db.hideHotkeys = false
+    ab:SettingChanged("hideHotkeys", false)
+    eq(ActionButton1.HotKey:GetAlpha(), 1, "hotkey back")
+    ActionButton_UpdateRangeIndicator(ActionButton1, true, false)
+    local r, g = ActionButton1.icon:GetVertexColor()
+    assert(r > 0.8 and g < 0.3, "red when out of range")
+    ActionButton_UpdateRangeIndicator(ActionButton1, true, true)
+    r = ActionButton1.icon:GetVertexColor()
+    eq(r, 1, "normal when in range")
+    ab.db.cooldownNumbers = "ON"
+    mock.cvars.countdownForCooldowns = "0"
+    ab:SettingChanged("cooldownNumbers", "ON")
+    eq(mock.cvars.countdownForCooldowns, "1", "cooldown numbers cvar")
+    ab.db.cooldownNumbers = "KEEP"
+end)
+
+-- vendor / trainer / auction / mail -----------------------------------------------------------------------------
+
+test("alt-click buys a full stack", function()
+    mock.merchantItems[2] = { link = item(6001, 1, 10), maxStack = 20, numAvailable = -1 }
+    eq(ns.MerchantStackSize(2), 20, "max stack")
+    mock.merchantItems[3] = { link = item(6002, 1, 10), maxStack = 20, numAvailable = 5 }
+    eq(ns.MerchantStackSize(3), 5, "limited supply")
+    local button = CreateFrame("Button")
+    button:SetID(2)
+    mock.reset()
+    MerchantItemButton_OnModifiedClick(button, "LeftButton")
+    eq(mock.count("BuyMerchantItem"), 0, "no alt, no stack buy")
+    mock.alt = true
+    MerchantItemButton_OnModifiedClick(button, "LeftButton")
+    eq(mock.calls.BuyMerchantItem[1][2], 20, "bought a stack")
+    mock.alt = false
+    noErrors()
+end)
+
+test("train all buys every available service", function()
+    local trainer = ns:GetModule("Trainer")
+    assert(BIGARMSTrainAll, "button created")
+    mock.trainerServices = { { name = "A", category = "available", cost = 100 }, { name = "B", category = "used", cost = 0 }, { name = "C", category = "available", cost = 250 } }
+    local list, cost = trainer:Available()
+    eq(#list, 2, "two available")
+    eq(cost, 350, "total cost")
+    mock.money = 1000
+    ClassTrainerFrame:Show()
+    mock.reset()
+    trainer:TrainAll()
+    mock.flushTimers()
+    eq(mock.count("BuyTrainerService"), 2, "both bought")
+    eq(mock.calls.BuyTrainerService[1][1], 3, "bottom up")
+    mock.money = 100
+    mock.reset()
+    trainer:TrainAll()
+    eq(mock.count("BuyTrainerService"), 0, "too poor")
+    mock.money = 123456
+    ClassTrainerFrame:Hide()
+    noErrors()
+end)
+
+test("auction prices are remembered and shown in tooltips", function()
+    mock.browseResults = { { itemKey = { itemID = 7001 }, minPrice = 12345 } }
+    mock.fire("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    local price, age = ns.GetAuctionPrice(7001)
+    eq(price, 12345, "browse price stored")
+    assert(age < 0.01, "fresh")
+    mock.itemResults = { { buyoutAmount = 0 }, { buyoutAmount = 50000, quantity = 5 } }
+    mock.fire("ITEM_SEARCH_RESULTS_UPDATED", { itemID = 7002 })
+    eq(ns.GetAuctionPrice(7002), 10000, "first buyout per unit")
+    BIGARMSDB.auction[7003] = { price = 5, time = time() - 30 * 86400 }
+    eq(ns.GetAuctionPrice(7003), nil, "old prices forgotten")
+
+    local link = item(7001, 2, 10)
+    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    mock.tooltipPostCalls[Enum.TooltipDataType.Item](GameTooltip, { id = 7001, hyperlink = link })
+    local joined = table.concat(GameTooltip.lines, "\n")
+    assert(joined:find("1|r" .. ns.L.GOLD_SHORT), "auction line in tooltip: " .. joined)
+    GameTooltip:Hide()
+    mock.reset()
+    ns:HandleSlash("ah 7001")
+    assert(printed("23|r"), "/ba ah reports")
+    noErrors()
+end)
+
+test("mail shows buttons for alts and recent recipients", function()
+    BIGARMSDB.gold["Altchar - Forever"] = { name = "Altchar", realm = "Forever", class = "MAGE", copper = 0, time = 1 }
+    SendMail("Someone", "hi", "")
+    eq(BIGARMSCharDB.recentMail[1], "Someone", "recent remembered")
+    mock.fire("MAIL_SHOW")
+    mock.flushTimers()
+    local mail = ns:GetModule("Mail")
+    assert(mail.buttons[1] and mail.buttons[1]:IsShown() and mail.buttons[1].recipient == "Altchar", "alt button")
+    assert(mail.buttons[2] and mail.buttons[2].recipient == "Someone", "recent button")
+    mail.buttons[2]:Click()
+    eq(SendMailNameEditBox:GetText(), "Someone", "recipient filled")
+    BIGARMSDB.gold["Altchar - Forever"] = nil
+    noErrors()
+end)
+
+-- gathering / extras ------------------------------------------------------------------------------------------------
+
+test("gathering nodes are recorded, merged and drawn", function()
+    wipe(BIGARMSDB.nodes)
+    mock.map.x, mock.map.y = 0.3, 0.4
+    mock.fire("UNIT_SPELLCAST_SENT", "player", "평온초", "cast-1", 2366)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 2366)
+    eq(#BIGARMSDB.nodes, 1, "node recorded")
+    eq(BIGARMSDB.nodes[1].name, "평온초", "name from the cast target")
+    eq(BIGARMSDB.nodes[1].kind, "HERB", "kind")
+    mock.fire("UNIT_SPELLCAST_SENT", "player", "평온초", "cast-2", 2366)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 2366)
+    eq(#BIGARMSDB.nodes, 1, "same spot merged")
+    mock.map.x = 0.6
+    mock.fire("UNIT_SPELLCAST_SENT", "player", "구리 광맥", "cast-3", 2575)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-3", 2575)
+    eq(#BIGARMSDB.nodes, 2, "second node")
+    mock.map.y = 0.8
+    mock.fire("UNIT_SPELLCAST_SENT", "player", "", "cast-4", 7620)
+    mock.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-4", 7620)
+    eq(BIGARMSDB.nodes[3].name, ns.L.GM_FISHING, "fishing spot named")
+
+    WorldMapFrame:Show()
+    eq(#WorldMapFrame.pins, 3, "pins on the world map")
+    WorldMapFrame.mapID = 9999
+    WorldMapFrame.provider:RefreshAllData()
+    eq(#WorldMapFrame.pins, 0, "only this map's nodes")
+    WorldMapFrame.mapID = 1429
+    WorldMapFrame:Hide()
+
+    mock.map.x, mock.map.y = 0.3, 0.4
+    mock.tick()
+    local gathering = ns:GetModule("Gathering")
+    local shown = 0
+    for _, pin in ipairs(gathering.pins) do
+        if pin:IsShown() then shown = shown + 1 end
+    end
+    assert(shown >= 1, "minimap pin for the node under the player")
+    local ox, oy = ns.MinimapOffset(0, 0, 100, 0, 200, 70, nil, false, false)
+    assert(math.abs(ox) < 0.01 and math.abs(oy - 35) < 0.01, "north node drawn above center")
+    eq(ns.MinimapOffset(0, 0, 1000, 0, 200, 70, nil, false, false), nil, "far node hidden")
+    local ex, ey = ns.MinimapOffset(0, 0, 1000, 0, 200, 70, nil, true, false)
+    assert(math.abs(ey - 70) < 0.01, "far node clamped to the edge")
+    gathering:Clear()
+    eq(#BIGARMSDB.nodes, 0, "cleared")
+    noErrors()
+end)
+
+test("compass positions directions and the waypoint", function()
+    local width = 400
+    assert(math.abs(ns.CompassOffset(0, 0, width, 180)) < 0.01, "north centered when facing north")
+    local west = ns.CompassOffset(math.pi / 2, 0, width, 180)
+    assert(west < -190, "west on the left edge: " .. tostring(west))
+    local east = ns.CompassOffset(3 * math.pi / 2, 0, width, 180)
+    assert(east > 190, "east on the right edge")
+    eq(ns.CompassOffset(math.pi, 0, width, 180), nil, "south out of view")
+    assert(math.abs(ns.CompassOffset(math.pi, math.pi, width, 180)) < 0.01, "south centered when facing south")
+end)
+
+test("performance text colors by thresholds", function()
+    assert(ns.PerformanceText(60, 40, 90, true):find("|cff40ff4060|r fps", 1, true), "green fps")
+    assert(ns.PerformanceText(20, 40, 90, false):find("|cffff404020|r fps", 1, true), "red fps")
+    assert(ns.PerformanceText(60, 40, 300, true):find("|cffff4040300|r ms", 1, true), "world latency used")
+    assert(ns.PerformanceText(60, 40, 300, false):find("|cff40ff4040|r ms", 1, true), "home only")
+    assert(BIGARMSPerformance and BIGARMSPerformance:IsShown(), "performance frame shown")
+end)
+
+test("flight timer learns a route", function()
+    local flight = ns:GetModule("FlightTimer")
+    TakeTaxiNode(2)
+    mock.onTaxi = true
+    mock.flushTimers()
+    assert(flight.flight and flight.flight.destination == "Goldshire", "flight started")
+    mock.time = mock.time + 90
+    mock.onTaxi = false
+    mock.tick()
+    eq(BIGARMSDB.flights["Stormwind|Goldshire"], 90, "duration learned")
+    assert(not flight.flight, "landed")
+    noErrors()
+end)
+
+test("error catcher records errors once each", function()
+    local catcher = ns:GetModule("ErrorCatcher")
+    wipe(BIGARMSDB.errors)
+    mock.reset()
+    mock.errorHandler("Interface/AddOns/Foo.lua:1: attempt to index nil")
+    mock.errorHandler("Interface/AddOns/Foo.lua:1: attempt to index nil")
+    eq(#BIGARMSDB.errors, 1, "one entry")
+    eq(BIGARMSDB.errors[1].count, 2, "counted twice")
+    assert(printed("attempt to index nil"), "first error announced")
+    eq(mock.lastHandled, "Interface/AddOns/Foo.lua:1: attempt to index nil", "previous handler still called")
+    catcher:ShowWindow()
+    assert(BIGARMSErrors:IsShown() and BIGARMSErrors.edit:GetText():find("x2"), "window lists it")
+    BIGARMSErrors:Hide()
+    ns:HandleSlash("errors clear")
+    eq(#BIGARMSDB.errors, 0, "cleared")
+end)
+
+test("buff reminder shows missing buffs out of combat only", function()
+    local reminder = ns:GetModule("BuffReminder")
+    ns:HandleSlash("buffs add 전투의 외침")
+    assert(BIGARMSCharDB.buffs["전투의 외침"], "watched")
+    mock.playerBuffs = {}
+    reminder:Update()
+    assert(BIGARMSBuffReminder:IsShown(), "missing buff shown")
+    mock.playerBuffs = { "전투의 외침" }
+    reminder:Update()
+    assert(not BIGARMSBuffReminder:IsShown(), "buff present")
+    mock.playerBuffs = {}
+    mock.aurasSecret = true
+    reminder:Update()
+    assert(not BIGARMSBuffReminder:IsShown(), "secret auras: nothing claimed")
+    mock.aurasSecret = false
+    mock.inCombat = true
+    reminder:Update()
+    assert(not BIGARMSBuffReminder:IsShown(), "hidden in combat")
+    mock.inCombat = false
+    reminder.db.weapon = true
+    mock.mainHandEnchant = false
+    ns:HandleSlash("buffs del 전투의 외침")
+    reminder:Update()
+    assert(BIGARMSBuffReminder:IsShown(), "weapon enchant missing")
+    reminder.db.weapon = false
+    reminder:Update()
+    noErrors()
+end)
+
+-- items / tooltip / quest / map extras ----------------------------------------------------------------------------
+
+test("unusable items are tinted from red tooltip lines and low ammo warns", function()
+    mock.bagTooltips["0:1"] = { { leftText = "Plate Armor", leftColor = { r = 1, g = 0.13, b = 0.13 } } }
+    mock.bagTooltips["0:2"] = { { leftText = "Cloth", leftColor = { r = 1, g = 1, b = 1 } } }
+    eq(ns.IsBagItemUsable(0, 1, "link-a"), false, "red line = unusable")
+    eq(ns.IsBagItemUsable(0, 2, "link-b"), true, "usable")
+    eq(ns.IsBagItemUsable(0, 1, "link-a"), false, "cached")
+    ns.ClearUsableCache()
+
+    mock.ammoID = 2512
+    mock.ammoCount = 50
+    mock.raidNotices = {}
+    mock.fire("BAG_UPDATE_DELAYED")
+    assert(mock.raidNotices[1] and mock.raidNotices[1]:find("50"), "ammo warning")
+    mock.fire("BAG_UPDATE_DELAYED")
+    eq(#mock.raidNotices, 1, "not repeated")
+    mock.ammoID = nil
+    noErrors()
+end)
+
+test("tooltip compares with equipped gear", function()
+    local worn = item(8001, 2, 10, { equipLoc = "INVTYPE_HEAD", level = 20 })
+    mock.equipped = { [1] = worn }
+    local new = item(8002, 3, 10, { equipLoc = "INVTYPE_HEAD", level = 27 })
+    GameTooltip:SetOwner(UIParent, "ANCHOR_NONE")
+    mock.tooltipPostCalls[Enum.TooltipDataType.Item](GameTooltip, { id = 8002, hyperlink = new })
+    local joined = table.concat(GameTooltip.lines, "\n")
+    assert(joined:find("20 %(|cff40ff40%+7|r%)"), "equipped 20, +7: " .. joined)
+    GameTooltip:Hide()
+    mock.equipped = nil
+end)
+
+test("waypoint arrow follows the tracked quest when no waypoint is set", function()
+    mock.trackedQuest = 42
+    mock.questWaypoint = { mapID = 1429, x = 0.7, y = 0.5 }
+    mock.map.x, mock.map.y = 0.5, 0.5
+    local wp = ns.Waypoint
+    wp.questLookup = nil
+    local point = wp:Current()
+    assert(point and point.quest and point.mapID == 1429, "quest point used")
+    local _, distance = wp:Bearing()
+    assert(distance and distance > 100, "distance to quest")
+    wp:Start()
+    mock.tick()
+    assert(BIGARMSWaypointArrow:IsShown(), "arrow for quest")
+    mock.trackedQuest = 0
+    wp.questLookup = nil
+    mock.time = mock.time + 2
+    mock.tick()
+    assert(not BIGARMSWaypointArrow:IsShown(), "arrow gone without quest")
+    noErrors()
+end)
+
+test("quest tracker scale and reputation auto watch", function()
+    local quest = ns:GetModule("Quest")
+    quest.db.trackerScale = 0.8
+    quest:SettingChanged("trackerScale", 0.8)
+    eq(ObjectiveTrackerFrame:GetScale(), 0.8, "tracker scaled")
+    quest.db.trackerScale = 1
+    quest:SettingChanged("trackerScale", 1)
+    mock.reset()
+    C_Reputation.SetWatchedFactionByID = function(id) mock.record("SetWatchedFactionByID", id) end
+    mock.factions[1].currentStanding = 3400
+    mock.fire("UPDATE_FACTION")
+    eq(mock.calls.SetWatchedFactionByID[1][1], 72, "watched the faction that gained")
+end)
+
+test("system: cvar command, volume, session and characters", function()
+    mock.reset()
+    ns:HandleSlash("cvar autoLootDefault 1")
+    eq(mock.cvars.autoLootDefault, "1", "cvar set")
+    ns:HandleSlash("cvar nosuchcvar")
+    assert(printed("nosuchcvar"), "unknown cvar reported")
+    mock.cvars.autoLootDefault = "0"
+    mock.cvars.Sound_MasterVolume = "0.50"
+    ns:HandleSlash("volume 80")
+    eq(mock.cvars.Sound_MasterVolume, "0.80", "volume set")
+    eq(ns.AdjustVolume(0.05), 85, "wheel step")
+    mock.reset()
+    mock.fire("TIME_PLAYED_MSG", 90000, 100)
+    ns:HandleSlash("alts")
+    assert(printed("1d 1h"), "played time listed")
+    mock.reset()
+    ns:HandleSlash("session")
+    assert(printed(ns.L.SESSION_LINE:sub(1, 6)), "session line")
+    ns:HandleSlash("home")
+    assert(printed("Goldshire"), "home")
+    noErrors()
+end)
+
+test("keybinding handler and chat link hover", function()
+    BIGARMS_Keybind("chatcopy")
+    assert(BIGARMSChatCopy:IsShown(), "copy window via keybind")
+    BIGARMSChatCopy:Hide()
+    assert(BINDING_NAME_BIGARMS_OPTIONS ~= "BIND_OPTIONS", "binding name translated")
+    GameTooltip.SetHyperlink = function(self, link) self.hyperlink = link end
+    ChatFrame1.scripts.OnHyperlinkEnter(ChatFrame1, "item:1234:0:0:0", "[Thing]")
+    eq(GameTooltip.hyperlink, "item:1234:0:0:0", "hover tooltip")
+    ChatFrame1.scripts.OnHyperlinkLeave(ChatFrame1)
+    GameTooltip.SetHyperlink = nil
 end)
 
 -- run -----------------------------------------------------------------------------------------------------

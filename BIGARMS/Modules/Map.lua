@@ -8,9 +8,10 @@ local L = ns.L
 
 local Waypoint = ns:NewModule("Waypoint", {
     group = "MAP",
-    defaults = { enabled = true, arrow = true, arrowY = 220, arriveDistance = 15, autoClear = true, gamePin = true },
+    defaults = { enabled = true, arrow = true, arrowY = 220, arriveDistance = 15, autoClear = true, gamePin = true, questArrow = true },
     options = {
         { key = "arrow", type = "toggle", label = "WP_ARROW" },
+        { key = "questArrow", type = "toggle", label = "WP_QUEST_ARROW", tooltip = "WP_QUEST_ARROW_TT" },
         { key = "arrowY", type = "range", label = "WP_ARROW_Y", min = -300, max = 400, step = 10, format = "%d" },
         { key = "gamePin", type = "toggle", label = "WP_PIN", tooltip = "WP_PIN_TT" },
         { key = "autoClear", type = "toggle", label = "WP_AUTOCLEAR" },
@@ -63,9 +64,52 @@ local function WorldPos(mapID, x, y)
     return nil
 end
 
+-- The waypoint of the quest the game is super tracking (looked up once a second).
+function Waypoint:QuestWaypoint()
+    if not self.db.questArrow or not (C_SuperTrack and C_SuperTrack.GetSuperTrackedQuestID) then
+        return nil
+    end
+    local now = GetTime()
+    if self.questLookup and now - self.questLookup < 1 then
+        return self.questPoint
+    end
+    self.questLookup = now
+    self.questPoint = nil
+    local questID = ns.Plain(C_SuperTrack.GetSuperTrackedQuestID())
+    if not questID or questID == 0 then
+        return nil
+    end
+    local mapID, x, y
+    if C_QuestLog and C_QuestLog.GetNextWaypoint then
+        local ok, m, px, py = pcall(C_QuestLog.GetNextWaypoint, questID)
+        if ok then
+            mapID, x, y = ns.Plain(m), ns.Plain(px), ns.Plain(py)
+        end
+    end
+    if not mapID and C_QuestLog and C_QuestLog.GetNextWaypointForMap then
+        local current = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+        if current then
+            local ok, px, py = pcall(C_QuestLog.GetNextWaypointForMap, questID, current)
+            if ok and px then
+                mapID, x, y = current, ns.Plain(px), ns.Plain(py)
+            end
+        end
+    end
+    if mapID and x and y then
+        local title = C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(questID) or nil
+        self.questPoint = { mapID = mapID, x = x, y = y, title = title, quest = true }
+    end
+    return self.questPoint
+end
+
+-- The point the arrow should show: a manual waypoint first, then the tracked quest.
+function Waypoint:Current()
+    return ns.char.waypoint or self:QuestWaypoint()
+end
+
 -- Angle (radians, 0 = north, counter clockwise) and distance to the waypoint.
 function Waypoint:Bearing()
-    local wp = ns.char.waypoint
+    local wp = self:Current()
     if not wp then
         return nil
     end
@@ -150,12 +194,12 @@ function Waypoint:LayoutArrow()
 end
 
 function Waypoint:UpdateArrow()
-    local wp = ns.char.waypoint
+    local wp = self:Current()
     if not wp or not self.db.arrow then
         if arrow then
             arrow:Hide()
         end
-        if self.ticker then
+        if not self.db.questArrow and self.ticker then
             self.ticker:Cancel()
             self.ticker = nil
         end
@@ -174,7 +218,7 @@ function Waypoint:UpdateArrow()
     end
     if distance then
         frame.distance:SetText(L.WP_DISTANCE:format(distance))
-        if self.db.autoClear and distance <= (tonumber(self.db.arriveDistance) or 15) then
+        if not wp.quest and self.db.autoClear and distance <= (tonumber(self.db.arriveDistance) or 15) then
             self:Print(L.WP_ARRIVED)
             PlaySound(SOUNDKIT and SOUNDKIT.MAP_PING or 3175)
             self:Clear()
@@ -247,7 +291,7 @@ function Waypoint:HandleCommand(args)
 end
 
 function Waypoint:Start()
-    if ns.char.waypoint and self.db.arrow and not self.ticker then
+    if (ns.char.waypoint or self.db.questArrow) and self.db.arrow and not self.ticker then
         self.ticker = self:Ticker(0.1, self.UpdateArrow)
     end
     self:UpdateArrow()

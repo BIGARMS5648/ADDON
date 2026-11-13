@@ -9,9 +9,11 @@ local L = ns.L
 local Items = ns:NewModule("Items", {
     group = "ITEMS",
     needsReload = true,
-    defaults = { enabled = true, bagItemLevel = true, characterItemLevel = true, alreadyKnown = true, freeSlots = true, minLevel = 1 },
+    defaults = { enabled = true, bagItemLevel = true, characterItemLevel = true, alreadyKnown = true, freeSlots = true, unusableTint = true, lowAmmo = 200 },
     options = {
         { key = "bagItemLevel", type = "toggle", label = "IT_BAG_ILVL" },
+        { key = "unusableTint", type = "toggle", label = "IT_UNUSABLE", tooltip = "IT_UNUSABLE_TT" },
+        { key = "lowAmmo", type = "range", label = "IT_LOW_AMMO", tooltip = "IT_LOW_AMMO_TT", min = 0, max = 1000, step = 50, format = "%d" },
         { key = "characterItemLevel", type = "toggle", label = "IT_CHAR_ILVL" },
         { key = "alreadyKnown", type = "toggle", label = "IT_KNOWN", tooltip = "IT_KNOWN_TT" },
         { key = "freeSlots", type = "toggle", label = "IT_FREE_SLOTS", tooltip = "IT_FREE_SLOTS_TT" },
@@ -77,20 +79,65 @@ end
 
 -- Bags ------------------------------------------------------------------------
 
-function Items:UpdateBagButton(button)
-    if not self.db.bagItemLevel then
-        if button.bigarmsLevel then
-            button.bigarmsLevel:Hide()
-        end
-        return
+local usableCache = {} -- [hyperlink] = true (usable) / false
+
+-- Can the character use this bag item? Red lines in its tooltip say no.
+function ns.IsBagItemUsable(bag, slot, link)
+    if link and usableCache[link] ~= nil then
+        return usableCache[link]
     end
+    local usable = true
+    if C_TooltipInfo and C_TooltipInfo.GetBagItem then
+        local ok, data = pcall(C_TooltipInfo.GetBagItem, bag, slot)
+        if ok and data and data.lines then
+            for _, line in ipairs(data.lines) do
+                local color = line.leftColor
+                if color and not ns.IsSecret(color) then
+                    local r, g, b = color.r, color.g, color.b
+                    if type(color.GetRGB) == "function" then
+                        r, g, b = color:GetRGB()
+                    end
+                    if r and g and b and r > 0.9 and g < 0.2 and b < 0.2 then
+                        usable = false
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if link then
+        usableCache[link] = usable
+    end
+    return usable
+end
+
+function ns.ClearUsableCache()
+    wipe(usableCache)
+end
+
+function Items:UpdateBagButton(button)
     local bag = button.GetBagID and button:GetBagID() or (button:GetParent() and button:GetParent().GetID and button:GetParent():GetID())
     local slot = button.GetID and button:GetID()
     if not bag or not slot or not C_Container or not C_Container.GetContainerItemInfo then
         return
     end
     local info = C_Container.GetContainerItemInfo(bag, slot)
-    SetLevel(button, info and info.hyperlink)
+    local link = info and info.hyperlink
+    if self.db.bagItemLevel then
+        SetLevel(button, link)
+    elseif button.bigarmsLevel then
+        button.bigarmsLevel:Hide()
+    end
+    local icon = button.icon or button.Icon or (button.GetName and _G[button:GetName() .. "IconTexture"])
+    if icon and icon.SetVertexColor then
+        if self.db.unusableTint and link and not ns.IsBagItemUsable(bag, slot, link) then
+            icon:SetVertexColor(1, 0.3, 0.3)
+            button.bigarmsTinted = true
+        elseif button.bigarmsTinted then
+            button.bigarmsTinted = nil
+            icon:SetVertexColor(1, 1, 1)
+        end
+    end
 end
 
 function Items:UpdateContainer(frame)
@@ -249,6 +296,43 @@ function Items:ApplyFreeSlots()
     end
 end
 
+-- Low ammo ---------------------------------------------------------------------------------------
+
+function ns.AmmoCount()
+    if not (GetInventoryItemID and GetInventoryItemCount) then
+        return nil
+    end
+    local id = ns.Plain(GetInventoryItemID("player", 0))
+    if not id then
+        return nil
+    end
+    return ns.Plain(GetInventoryItemCount("player", 0)) or 0
+end
+
+function Items:CheckAmmo()
+    local threshold = tonumber(self.db.lowAmmo) or 0
+    if threshold <= 0 then
+        return
+    end
+    local count = ns.AmmoCount()
+    if not count then
+        return
+    end
+    if count <= threshold then
+        local now = GetTime()
+        if not self.ammoWarned or now - self.ammoWarned > 300 then
+            self.ammoWarned = now
+            local text = L.IT_AMMO_LOW:format(count)
+            if RaidNotice_AddMessage and RaidWarningFrame then
+                RaidNotice_AddMessage(RaidWarningFrame, text, { r = 1, g = 0.5, b = 0 })
+            end
+            self:Print(text)
+        end
+    else
+        self.ammoWarned = nil
+    end
+end
+
 -- Setup -------------------------------------------------------------------------------------
 
 function Items:OnEnable()
@@ -256,6 +340,15 @@ function Items:OnEnable()
     self:HookCharacter()
     self:HookMerchant()
     self:ApplyFreeSlots()
+    self:RegisterEvent("BAG_UPDATE_DELAYED", "CheckAmmo")
+    self:RegisterEvent("UNIT_INVENTORY_CHANGED", function(module, _, unit)
+        if unit == "player" then
+            module:CheckAmmo()
+        end
+    end)
+    self:RegisterEvent("PLAYER_LEVEL_UP", ns.ClearUsableCache)
+    self:RegisterEvent("SKILL_LINES_CHANGED", ns.ClearUsableCache)
+    self:RegisterEvent("SPELLS_CHANGED", ns.ClearUsableCache)
 end
 
 function Items:OnSettingChanged()

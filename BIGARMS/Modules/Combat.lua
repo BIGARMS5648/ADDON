@@ -276,3 +276,181 @@ end
 function SwingTimer:OnSettingChanged()
     self:Layout()
 end
+
+--------------------------------------------------------------------------
+-- Buff reminder: icons for self buffs you are missing (out of combat),
+-- and a warning when your weapon has no temporary enchant.
+--------------------------------------------------------------------------
+
+local BuffReminder = ns:NewModule("BuffReminder", {
+    group = "COMBAT",
+    defaults = { enabled = true, weapon = false, y = 120, size = 36 },
+    options = {
+        { key = "weapon", type = "toggle", label = "BR_WEAPON", tooltip = "BR_WEAPON_TT" },
+        { key = "size", type = "range", label = "BR_SIZE", min = 20, max = 64, step = 4, format = "%d" },
+        { key = "y", type = "range", label = "BR_Y", min = -300, max = 400, step = 10, format = "%d" },
+        { type = "description", text = "BR_HELP" },
+    },
+})
+ns.BuffReminder = BuffReminder
+
+local buffFrame
+
+-- Names of the player's current helpful auras, or nil when the client keeps them secret.
+function ns.PlayerBuffNames()
+    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then
+        return nil
+    end
+    local names = {}
+    local ok = pcall(function()
+        if AuraUtil and AuraUtil.ForEachAura then
+            AuraUtil.ForEachAura("player", "HELPFUL", nil, function(aura)
+                local name = type(aura) == "table" and aura.name or aura
+                if type(name) == "string" and not ns.IsSecret(name) then
+                    names[name] = true
+                end
+            end, true)
+        elseif C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            for i = 1, 60 do
+                local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HELPFUL")
+                if not aura then
+                    break
+                end
+                if type(aura.name) == "string" and not ns.IsSecret(aura.name) then
+                    names[aura.name] = true
+                end
+            end
+        end
+    end)
+    if not ok then
+        return nil
+    end
+    return names
+end
+
+function BuffReminder:Missing()
+    local missing = {}
+    local wanted = ns.char.buffs
+    if next(wanted) then
+        local have = ns.PlayerBuffNames()
+        if have then
+            for name in pairs(wanted) do
+                if not have[name] then
+                    missing[#missing + 1] = name
+                end
+            end
+        end
+    end
+    if self.db.weapon and GetWeaponEnchantInfo then
+        local hasMainHand = ns.Plain((GetWeaponEnchantInfo()))
+        if hasMainHand == false and GetInventoryItemID and GetInventoryItemID("player", 16) then
+            missing[#missing + 1] = L.BR_WEAPON_MISSING
+        end
+    end
+    table.sort(missing)
+    return missing
+end
+
+function BuffReminder:GetFrame()
+    if buffFrame then
+        return buffFrame
+    end
+    buffFrame = CreateFrame("Frame", "BIGARMSBuffReminder", UIParent)
+    buffFrame:SetSize(200, 40)
+    buffFrame.icons = {}
+    return buffFrame
+end
+
+function BuffReminder:Icon(i)
+    local frame = self:GetFrame()
+    local icon = frame.icons[i]
+    if not icon then
+        icon = CreateFrame("Frame", nil, frame)
+        icon.texture = icon:CreateTexture(nil, "ARTWORK")
+        icon.texture:SetAllPoints()
+        icon.label = icon:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        icon.label:SetPoint("TOP", icon, "BOTTOM", 0, -1)
+        frame.icons[i] = icon
+    end
+    return icon
+end
+
+local function SpellIcon(name)
+    if C_Spell and C_Spell.GetSpellInfo then
+        local ok, info = pcall(C_Spell.GetSpellInfo, name)
+        if ok and type(info) == "table" and info.iconID then
+            return info.iconID
+        end
+    end
+    return "Interface\\Icons\\INV_Misc_QuestionMark"
+end
+
+function BuffReminder:Update()
+    local frame = self:GetFrame()
+    if InCombatLockdown() or (UnitIsDeadOrGhost and UnitIsDeadOrGhost("player")) or (UnitOnTaxi and UnitOnTaxi("player")) then
+        frame:Hide()
+        return
+    end
+    local missing = self:Missing()
+    if #missing == 0 then
+        frame:Hide()
+        return
+    end
+    local size = tonumber(self.db.size) or 36
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", 0, tonumber(self.db.y) or 120)
+    frame:SetSize(#missing * (size + 4), size)
+    for i, name in ipairs(missing) do
+        local icon = self:Icon(i)
+        icon:SetSize(size, size)
+        icon:ClearAllPoints()
+        icon:SetPoint("LEFT", frame, "LEFT", (i - 1) * (size + 4), 0)
+        icon.texture:SetTexture(name == L.BR_WEAPON_MISSING and "Interface\\Icons\\INV_Sword_04" or SpellIcon(name))
+        icon.label:SetText(name)
+        icon:Show()
+    end
+    for i = #missing + 1, #frame.icons do
+        frame.icons[i]:Hide()
+    end
+    frame:Show()
+end
+
+function BuffReminder:HandleCommand(args)
+    local action, name = args:match("^(%S+)%s*(.*)$")
+    action = action and action:lower() or ""
+    name = ns.Trim(name or "")
+    if (action == "add" or action == "추가") and name ~= "" then
+        ns.char.buffs[name] = true
+        self:Print(L.BR_ADDED:format(name))
+    elseif (action == "del" or action == "remove" or action == "삭제") and name ~= "" then
+        ns.char.buffs[name] = nil
+        self:Print(L.BR_REMOVED:format(name))
+    else
+        local names = {}
+        for buff in pairs(ns.char.buffs) do
+            names[#names + 1] = buff
+        end
+        table.sort(names)
+        self:Print(L.BR_LIST .. " " .. (#names > 0 and table.concat(names, ", ") or "-"))
+        self:Print(L.BR_USAGE)
+    end
+    self:Update()
+end
+
+function BuffReminder:OnEnable()
+    self:Ticker(3, self.Update)
+    self:RegisterEvent("PLAYER_REGEN_ENABLED", function(module) module:After(1, module.Update) end)
+    self:RegisterEvent("PLAYER_REGEN_DISABLED", "Update")
+    self:RegisterEvent("PLAYER_ENTERING_WORLD", function(module) module:After(2, module.Update) end)
+    self:Update()
+end
+
+function BuffReminder:OnDisable()
+    if buffFrame then
+        buffFrame:Hide()
+    end
+end
+
+function BuffReminder:OnSettingChanged()
+    self:Update()
+end

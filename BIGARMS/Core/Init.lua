@@ -30,7 +30,11 @@ ns.DB_DEFAULTS = {
     modules = {}, -- [module name] = settings table
     minimap = { hide = false, angle = 215 },
     positions = {}, -- [frame key] = { point, x, y }
-    gold = {}, -- [realm .. " - " .. name] = { copper =, class =, time = }
+    gold = {}, -- [realm .. " - " .. name] = { copper =, class =, level =, played =, time = }
+    auction = {}, -- [itemID] = { price = copper per unit, time = }
+    flights = {}, -- ["origin|destination"] = seconds
+    nodes = {}, -- gathering nodes: { mapID =, x =, y =, name =, kind =, time = }
+    errors = {}, -- caught Lua errors: { message =, count =, time = }
     debug = false,
 }
 
@@ -41,6 +45,8 @@ ns.CHAR_DEFAULTS = {
     questBlock = {}, -- [questID] = true, never auto-accept
     waypoint = nil, -- { mapID =, x =, y =, title = }
     chatHistory = {},
+    buffs = {}, -- buff reminder: [spell name] = true
+    recentMail = {}, -- last recipients
     xp = {}, -- session helpers
 }
 
@@ -303,6 +309,83 @@ function ns.UnitColor(unit)
     return ns.ReactionColor(unit)
 end
 
+-- Turn a Blizzard format string ("%s has come online.") into a Lua pattern
+-- with captures, so localized system messages can be parsed.
+function ns.PatternFromFormat(format)
+    if type(format) ~= "string" then
+        return nil
+    end
+    local pattern = format:gsub("%%%d?%$?([sd])", "\1%1") -- mark %s / %d / %1$s
+    pattern = pattern:gsub("([%(%)%.%+%-%*%?%[%]%^%$%%])", "%%%1")
+    pattern = pattern:gsub("\1s", "(.-)"):gsub("\1d", "(%%d+)")
+    return "^" .. pattern .. "$"
+end
+
+-- Does another addon already own this slash command ("/pull")?
+function ns.IsSlashTaken(command)
+    command = command:lower()
+    for key, value in pairs(_G) do
+        if type(key) == "string" and type(value) == "string" and key:find("^SLASH_") and value:lower() == command then
+            return true
+        end
+    end
+    return false
+end
+
+-- Apply one "cvar" option of a module: "ONOFF" selects write 1/0 unless KEEP,
+-- ranges write their value unless negative.
+function ns.ApplyCVarOption(module, option)
+    if not option.cvar then
+        return
+    end
+    local value = module.db[option.key]
+    if option.choices == "ONOFF" then
+        if value == "ON" then
+            ns.SetCVar(option.cvar, 1)
+        elseif value == "OFF" then
+            ns.SetCVar(option.cvar, 0)
+        end
+    elseif option.type == "range" then
+        value = tonumber(value) or -1
+        if value >= 0 then
+            ns.SetCVar(option.cvar, value)
+        end
+    end
+end
+
+function ns.ApplyCVarOptions(module)
+    for _, option in ipairs(module.options) do
+        ns.ApplyCVarOption(module, option)
+    end
+end
+
+-- Strip "-Realm" from a character name.
+function ns.ShortName(name)
+    if type(name) ~= "string" then
+        return name
+    end
+    return (name:match("^([^%-]+)")) or name
+end
+
+function ns.IsMe(name)
+    local me = UnitName("player")
+    return name ~= nil and me ~= nil and ns.ShortName(name) == me
+end
+
+-- Group chat channel for announcements, nil when solo.
+function ns.GroupChannel()
+    if not (IsInGroup and IsInGroup()) then
+        return nil
+    end
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE or 2) then
+        return "INSTANCE_CHAT"
+    end
+    if IsInRaid and IsInRaid() then
+        return "RAID"
+    end
+    return "PARTY"
+end
+
 -- Is this guid / name one of my friends or guild mates?
 function ns.IsFriendOrGuild(name, guid)
     if guid and C_FriendList and C_FriendList.IsFriend and C_FriendList.IsFriend(guid) then
@@ -504,10 +587,18 @@ function Module:Ticker(interval, fn, iterations)
 end
 
 function Module:CancelTickers()
+    local cancelled = {}
     for _, ticker in ipairs(self.tickers) do
         ticker:Cancel()
+        cancelled[ticker] = true
     end
     self.tickers = {}
+    -- forget handles the module kept ("self.ticker"), so a re-enable starts fresh
+    for key, value in pairs(self) do
+        if cancelled[value] then
+            self[key] = nil
+        end
+    end
 end
 
 -- Secure hook that only runs while the module is enabled. Hooks can never
@@ -620,6 +711,34 @@ function ns:SetModuleEnabled(name, enabled)
         end
     end)
     return true
+end
+
+--------------------------------------------------------------------------
+-- Keybindings (Bindings.xml)
+--------------------------------------------------------------------------
+
+BINDING_HEADER_BIGARMS = "BIGARMS"
+BINDING_NAME_BIGARMS_OPTIONS = ns.L.BIND_OPTIONS
+BINDING_NAME_BIGARMS_CHATCOPY = ns.L.BIND_CHATCOPY
+BINDING_NAME_BIGARMS_PULL = ns.L.BIND_PULL
+BINDING_NAME_BIGARMS_WAYCLEAR = ns.L.BIND_WAYCLEAR
+BINDING_NAME_BIGARMS_ERRORS = ns.L.BIND_ERRORS
+BINDING_NAME_BIGARMS_MINIMAP = ns.L.BIND_MINIMAP
+
+function BIGARMS_Keybind(action)
+    if action == "options" then
+        ns:OpenOptions()
+    elseif action == "chatcopy" and ns.ShowChatCopy then
+        ns.ShowChatCopy()
+    elseif action == "pull" and ns.HandleSlash then
+        ns:HandleSlash("pull")
+    elseif action == "wayclear" and ns.HandleSlash then
+        ns:HandleSlash("way clear")
+    elseif action == "errors" and ns.HandleSlash then
+        ns:HandleSlash("errors")
+    elseif action == "minimap" and ns.HandleSlash then
+        ns:HandleSlash("minimap")
+    end
 end
 
 --------------------------------------------------------------------------

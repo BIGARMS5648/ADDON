@@ -24,6 +24,8 @@ local Tooltip = ns:NewModule("Tooltip", {
         itemCount = true,
         qualityBorder = true,
         spellID = false,
+        upgradeCompare = true,
+        auctionPrice = true,
     },
     options = {
         { type = "header", text = "TT_HEADER_GENERAL" },
@@ -47,6 +49,8 @@ local Tooltip = ns:NewModule("Tooltip", {
         { key = "itemLevel", type = "toggle", label = "TT_ITEM_LEVEL" },
         { key = "sellPrice", type = "toggle", label = "TT_SELL_PRICE", tooltip = "TT_SELL_PRICE_TT" },
         { key = "itemCount", type = "toggle", label = "TT_ITEM_COUNT" },
+        { key = "upgradeCompare", type = "toggle", label = "TT_UPGRADE", tooltip = "TT_UPGRADE_TT" },
+        { key = "auctionPrice", type = "toggle", label = "TT_AUCTION", tooltip = "TT_AUCTION_TT" },
         { key = "qualityBorder", type = "toggle", label = "TT_QUALITY_BORDER" },
         { key = "itemID", type = "toggle", label = "TT_ITEM_ID" },
         { key = "spellID", type = "toggle", label = "TT_SPELL_ID" },
@@ -217,6 +221,37 @@ local function TooltipStackCount(tooltip)
     return 1
 end
 
+-- inventory slots an item of this equip location can go into
+local EQUIP_SLOTS = {
+    INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_BODY = { 4 }, INVTYPE_CHEST = { 5 },
+    INVTYPE_ROBE = { 5 }, INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 }, INVTYPE_WRIST = { 9 },
+    INVTYPE_HAND = { 10 }, INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 }, INVTYPE_CLOAK = { 15 },
+    INVTYPE_WEAPON = { 16, 17 }, INVTYPE_SHIELD = { 17 }, INVTYPE_2HWEAPON = { 16 }, INVTYPE_WEAPONMAINHAND = { 16 },
+    INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_HOLDABLE = { 17 }, INVTYPE_RANGED = { 18 }, INVTYPE_THROWN = { 18 },
+    INVTYPE_RANGEDRIGHT = { 18 }, INVTYPE_RELIC = { 18 },
+}
+ns.EQUIP_SLOTS = EQUIP_SLOTS
+
+-- Item level of what is worn in the slots this item could replace: lowest, highest.
+function ns.EquippedItemLevels(equipLoc)
+    local slots = EQUIP_SLOTS[equipLoc]
+    if not slots or not GetInventoryItemLink then
+        return nil
+    end
+    local lowest, highest
+    for _, slot in ipairs(slots) do
+        local link = GetInventoryItemLink("player", slot)
+        local level = link and ns.GearItemLevel and ns.GearItemLevel(link) or 0
+        if not lowest or level < lowest then
+            lowest = level
+        end
+        if not highest or level > highest then
+            highest = level
+        end
+    end
+    return lowest, highest
+end
+
 function Tooltip:OnItemTooltip(tooltip, data)
     if tooltip.bigarmsItemDone then
         return
@@ -235,6 +270,28 @@ function Tooltip:OnItemTooltip(tooltip, data)
         local level = ns.Plain(C_Item.GetDetailedItemLevelInfo(link))
         if level and level > 1 then
             tooltip:AddLine(L.TT_ITEM_LEVEL_LINE:format(level), 1, 0.82, 0)
+        end
+    end
+
+    if db.upgradeCompare and equipLoc and ns.EQUIP_SLOTS[equipLoc] and ns.GearItemLevel then
+        local level = ns.GearItemLevel(link)
+        local lowest = ns.EquippedItemLevels(equipLoc)
+        if level and lowest then
+            local diff = level - lowest
+            local color = diff > 0 and "|cff40ff40+" or diff < 0 and "|cffff4040" or "|cffaaaaaa"
+            tooltip:AddDoubleLine(L.TT_EQUIPPED, ("%d (%s%d|r)"):format(lowest, color, diff), 0.7, 0.7, 0.7, 1, 1, 1)
+        end
+    end
+
+    if db.auctionPrice and itemID and ns.GetAuctionPrice then
+        local price, age = ns.GetAuctionPrice(itemID)
+        if price then
+            local count = TooltipStackCount(tooltip)
+            local text = ns.FormatMoney(price * math.max(count, 1))
+            if count > 1 then
+                text = text .. (" |cff888888(%s x%d)|r"):format(ns.FormatMoney(price), count)
+            end
+            tooltip:AddDoubleLine(L.TT_AUCTION_LINE:format(age < 1 and L.AH_TODAY or L.AH_DAYS_AGO:format(age)), text, 0.7, 0.7, 0.7, 1, 1, 1)
         end
     end
 

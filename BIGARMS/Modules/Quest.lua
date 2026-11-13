@@ -8,8 +8,9 @@ local L = ns.L
 local Quest = ns:NewModule("Quest", {
     group = "QUEST",
     needsReload = true,
-    defaults = { enabled = true, levels = true, autoTrack = true, completeAlert = true, completeSound = true, announce = false },
+    defaults = { enabled = true, levels = true, autoTrack = true, completeAlert = true, completeSound = true, announce = false, trackerScale = 1 },
     options = {
+        { key = "trackerScale", type = "range", label = "Q_TRACKER_SCALE", tooltip = "Q_TRACKER_SCALE_TT", min = 0.5, max = 1.5, step = 0.05, format = "%.2f" },
         { key = "levels", type = "toggle", label = "Q_LEVELS", tooltip = "Q_LEVELS_TT" },
         { key = "autoTrack", type = "toggle", label = "Q_AUTOTRACK" },
         { key = "completeAlert", type = "toggle", label = "Q_COMPLETE_ALERT", tooltip = "Q_COMPLETE_ALERT_TT" },
@@ -165,6 +166,7 @@ end
 function Quest:OnEnable()
     self:HookQuestLog()
     self:ApplyAutoTrack()
+    self:ApplyTrackerScale()
     self:RegisterEvent("QUEST_ACCEPTED", "OnQuestAccepted")
     self:RegisterEvent("QUEST_WATCH_UPDATE", "OnWatchUpdate")
     self:RegisterEvent("UNIT_QUEST_LOG_CHANGED", function(module, _, unit)
@@ -176,6 +178,14 @@ function Quest:OnEnable()
     self:RegisterEvent("UI_INFO_MESSAGE", "OnInfoMessage")
 end
 
+function Quest:ApplyTrackerScale()
+    local tracker = ObjectiveTrackerFrame
+    if tracker and tracker.SetScale and not InCombatLockdown() then
+        tracker:SetScale(tonumber(self.db.trackerScale) or 1)
+    end
+end
+
 function Quest:OnSettingChanged()
     self:ApplyAutoTrack()
+    self:ApplyTrackerScale()
 end

@@ -64,6 +64,9 @@ local Chat = ns:NewModule("Chat", {
         flashOnWhisper = true,
         history = true,
         historyLines = 60,
+        linkHover = true,
+        unclamp = false,
+        maxLines = 0,
     },
     options = {
         { key = "timestamps", type = "select", label = "CHAT_TIMESTAMPS", choices = function()
@@ -85,6 +88,9 @@ local Chat = ns:NewModule("Chat", {
         { key = "flashOnWhisper", type = "toggle", label = "CHAT_FLASH" },
         { key = "history", type = "toggle", label = "CHAT_HISTORY", tooltip = "CHAT_HISTORY_TT" },
         { key = "historyLines", type = "range", label = "CHAT_HISTORY_LINES", min = 10, max = 200, step = 10, format = "%d" },
+        { key = "linkHover", type = "toggle", label = "CHAT_LINK_HOVER", tooltip = "CHAT_LINK_HOVER_TT" },
+        { key = "unclamp", type = "toggle", label = "CHAT_UNCLAMP", tooltip = "CHAT_UNCLAMP_TT" },
+        { key = "maxLines", type = "range", label = "CHAT_MAX_LINES", tooltip = "CHAT_MAX_LINES_TT", min = 0, max = 4096, step = 128, format = "%d" },
     },
 })
 ns.Chat = Chat
@@ -459,6 +465,33 @@ function Chat:ApplyToFrame(frame, index)
                 end
             end)
         end
+    end
+    if db.linkHover and not frame.bigarmsHover then
+        frame.bigarmsHover = true
+        self:HookScript(frame, "OnHyperlinkEnter", function(module, self_, link)
+            if not module.db.linkHover or type(link) ~= "string" then
+                return
+            end
+            local kind = link:match("^(%a+):")
+            if kind == "item" or kind == "spell" or kind == "enchant" or kind == "quest" or kind == "talent" or kind == "achievement" then
+                GameTooltip:SetOwner(self_, "ANCHOR_CURSOR")
+                local ok = pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+                if ok then
+                    GameTooltip:Show()
+                end
+            end
+        end)
+        self:HookScript(frame, "OnHyperlinkLeave", function()
+            GameTooltip:Hide()
+        end)
+    end
+    if db.unclamp and frame.SetClampRectInsets then
+        pcall(frame.SetClampRectInsets, frame, 0, 0, 0, 0)
+    end
+    local maxLines = tonumber(db.maxLines) or 0
+    if maxLines >= 128 and frame.SetMaxLines and not frame.bigarmsMaxLines then
+        frame.bigarmsMaxLines = true
+        pcall(frame.SetMaxLines, frame, maxLines)
     end
     if db.copyButton then
         self:CreateCopyButton(frame)

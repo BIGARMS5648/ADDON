@@ -189,6 +189,11 @@ for _, e in ipairs({
     "UNIT_PET", "UPDATE_INVENTORY_DURABILITY", "PLAYER_EQUIPMENT_CHANGED", "UPDATE_FACTION", "PLAYER_SWING",
     "PLAYER_MONEY", "PLAYER_XP_UPDATE", "UPDATE_EXHAUSTION", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS",
     "ZONE_CHANGED_NEW_AREA", "EXPERIMENTAL_CVAR_CONFIRMATION_NEEDED", "PLAYER_SOFT_INTERACT_CHANGED",
+    "START_LOOT_ROLL", "LOOT_BIND_CONFIRM", "CONFIRM_LOOT_ROLL", "CONFIRM_DISENCHANT_ROLL", "CHAT_MSG_LOOT",
+    "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "UPDATE_MOUSEOVER_UNIT", "READY_CHECK", "UPDATE_BATTLEFIELD_STATUS",
+    "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_SENT", "TRAINER_SHOW", "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED",
+    "AUCTION_HOUSE_BROWSE_RESULTS_ADDED", "COMMODITY_SEARCH_RESULTS_UPDATED", "ITEM_SEARCH_RESULTS_UPDATED", "MAIL_SHOW",
+    "BAG_UPDATE_DELAYED", "UNIT_INVENTORY_CHANGED", "SKILL_LINES_CHANGED", "SPELLS_CHANGED", "TIME_PLAYED_MSG",
 }) do KNOWN_EVENTS[e] = true end
 mock.knownEvents = KNOWN_EVENTS
 
@@ -662,7 +667,9 @@ C_QuestLog = {
     IsComplete = function(id) return mock.quest.complete and mock.quest.complete[id] or false end,
     GetTitleForQuestID = function(id) return "Quest " .. id end,
     GetInfo = function() return nil end,
+    GetNextWaypoint = function(id) if mock.questWaypoint then return mock.questWaypoint.mapID, mock.questWaypoint.x, mock.questWaypoint.y end end,
 }
+
 
 -- group / social actions
 function AcceptGroup() record("AcceptGroup") end
@@ -713,7 +720,10 @@ C_Map = {
 }
 function CreateVector2D(x, y) return { GetXY = function() return x, y end } end
 UiMapPoint = { CreateFromCoordinates = function(mapID, x, y) return { mapID = mapID, x = x, y = y } end }
-C_SuperTrack = { SetSuperTrackedUserWaypoint = function(v) record("SetSuperTrackedUserWaypoint", v) end }
+C_SuperTrack = {
+    SetSuperTrackedUserWaypoint = function(v) record("SetSuperTrackedUserWaypoint", v) end,
+    GetSuperTrackedQuestID = function() return mock.trackedQuest or 0 end,
+}
 
 -- reputation
 mock.factions = { { factionID = 72, name = "Stormwind", reaction = 5, currentStanding = 3100, currentReactionThreshold = 3000, nextReactionThreshold = 9000 } }
@@ -721,6 +731,159 @@ C_Reputation = {
     GetNumFactions = function() return #mock.factions end,
     GetFactionDataByIndex = function(i) return mock.factions[i] end,
 }
+
+-- mixins / map canvas
+function CreateFromMixins(...)
+    local obj = {}
+    for i = 1, select("#", ...) do
+        local mixin = select(i, ...)
+        for k, v in pairs(mixin or {}) do obj[k] = v end
+    end
+    return obj
+end
+MapCanvasPinMixin = { SetPosition = function(self, x, y) self.x, self.y = x, y end }
+MapCanvasDataProviderMixin = { GetMap = function(self) return self.map end }
+WorldMapFrame = CreateFrame("Frame", "WorldMapFrame", UIParent)
+WorldMapFrame.shown = false
+WorldMapFrame.mapID = 1429
+WorldMapFrame.pins = {}
+function WorldMapFrame:GetMapID() return self.mapID end
+function WorldMapFrame:AddDataProvider(provider) provider.map = self; self.provider = provider end
+function WorldMapFrame:RemoveAllPinsByTemplate() self.pins = {} end
+function WorldMapFrame:AcquirePin(template, data)
+    local pin = CreateFromMixins(BIGARMSGatherPinMixin)
+    pin.Icon = newRegion("Texture")
+    pin:OnAcquired(data)
+    self.pins[#self.pins + 1] = pin
+    return pin
+end
+
+-- errors, performance, time
+mock.errorHandler = function(msg) mock.lastHandled = msg end
+function geterrorhandler() return mock.errorHandler end
+function seterrorhandler(fn) mock.errorHandler = fn end
+function date(fmt, t) return os.date(fmt, t) end
+function GetFramerate() return mock.fps or 60 end
+function GetNetStats() return 0, 0, mock.homeMS or 40, mock.worldMS or 90 end
+function GetBindLocation() return "Goldshire" end
+function GetRealZoneText() return "Elwynn Forest" end
+function RequestTimePlayed() record("RequestTimePlayed") end
+TIME_PLAYED_TOTAL = "Total time played: %s"
+TIME_PLAYED_LEVEL = "Time played this level: %s"
+
+-- nameplates and unit tooltips
+mock.plates = {} -- [unit] = plate
+C_NamePlate = {
+    GetNamePlateForUnit = function(unit) return mock.plates[unit] end,
+    GetNamePlates = function()
+        local list = {}
+        for unit, plate in pairs(mock.plates) do plate.namePlateUnitToken = unit; list[#list + 1] = plate end
+        return list
+    end,
+}
+function mock.addPlate(unit, data)
+    mock.units[unit] = data
+    local plate = CreateFrame("Frame")
+    plate.UnitFrame = CreateFrame("Frame", nil, plate)
+    plate.UnitFrame.healthBar = CreateFrame("StatusBar", nil, plate.UnitFrame)
+    plate.UnitFrame.unit = unit
+    mock.plates[unit] = plate
+    mock.fire("NAME_PLATE_UNIT_ADDED", unit)
+    return plate
+end
+function mock.removePlate(unit)
+    mock.fire("NAME_PLATE_UNIT_REMOVED", unit)
+    mock.plates[unit] = nil
+    mock.units[unit] = nil
+end
+mock.unitTooltips = {} -- [unit] = { lines }
+mock.bagTooltips = {} -- [bag..":"..slot] = { lines }
+mock.merchantTooltips = {}
+C_TooltipInfo = {
+    GetUnit = function(unit) return { lines = mock.unitTooltips[unit] or {} } end,
+    GetBagItem = function(bag, slot) return { lines = mock.bagTooltips[bag .. ":" .. slot] or {} } end,
+    GetMerchantItem = function(index) return { lines = mock.merchantTooltips[index] or {} } end,
+}
+function UnitClassification(u) local d = unit(u); return d and d.classification or "normal" end
+function UnitCanAttack(a, b) local d = unit(b); return d and d.hostile or false end
+function UnitIsAFK() return mock.afk or false end
+function UnitOnTaxi() return mock.onTaxi or false end
+function GetNumGroupMembers() return mock.groupMembers and #mock.groupMembers or 0 end
+
+-- loot rolls
+mock.rolls = {} -- [rollID] = { name, quality, bop, canNeed, canGreed }
+function GetLootRollItemInfo(rollID)
+    local r = mock.rolls[rollID]
+    if r then return "tex", r.name, 1, r.quality, r.bop, r.canNeed ~= false, r.canGreed ~= false, false end
+end
+function RollOnLoot(rollID, rollType) record("RollOnLoot", rollID, rollType) end
+function ConfirmLootSlot(slot) record("ConfirmLootSlot", slot) end
+function ConfirmLootRoll(rollID, rollType) record("ConfirmLootRoll", rollID, rollType) end
+function ConfirmReadyCheck(v) record("ConfirmReadyCheck", v) end
+mock.battlefield = {}
+function GetBattlefieldStatus(index) local b = mock.battlefield[index]; if b then return b.status, b.map end end
+function AcceptBattlefieldPort(index, accept) record("AcceptBattlefieldPort", index, accept) end
+mock.spellNames = { [1766] = "발차기", [6552] = "자루 공격", [2139] = "마법 차단", [2366] = "약초 채집", [2575] = "채광", [7620] = "낚시", [8042] = "대지 충격" }
+C_Spell = {
+    GetSpellName = function(id) return mock.spellNames[id] end,
+    GetSpellInfo = function(name) return { iconID = 12345, name = name } end,
+}
+
+-- merchant / trainer
+mock.merchantItems = {} -- [index] = { link, maxStack, numAvailable }
+function GetMerchantItemMaxStack(index) local m = mock.merchantItems[index]; return m and m.maxStack or 1 end
+function GetMerchantItemLink(index) local m = mock.merchantItems[index]; return m and m.link end
+C_MerchantFrame = { GetItemInfo = function(index) local m = mock.merchantItems[index]; return m and { numAvailable = m.numAvailable or -1 } end }
+function BuyMerchantItem(index, count) record("BuyMerchantItem", index, count) end
+function MerchantItemButton_OnModifiedClick(button, mouseButton) record("MerchantItemButton_OnModifiedClick", button, mouseButton) end
+mock.trainerServices = {} -- { name, category, cost }
+function GetNumTrainerServices() return #mock.trainerServices end
+function GetTrainerServiceInfo(i) local s = mock.trainerServices[i]; return s.name, "rank", s.category end
+function GetTrainerServiceCost(i) return mock.trainerServices[i].cost or 0 end
+function BuyTrainerService(i) record("BuyTrainerService", i) end
+ClassTrainerFrame = CreateFrame("Frame", "ClassTrainerFrame", UIParent)
+
+-- auction house
+mock.browseResults = {}
+C_AuctionHouse = {
+    GetBrowseResults = function() return mock.browseResults end,
+    GetCommoditySearchResultInfo = function(itemID, i) return mock.commodity and mock.commodity[itemID] end,
+    GetNumItemSearchResults = function() return mock.itemResults and #mock.itemResults or 0 end,
+    GetItemSearchResultInfo = function(key, i) return mock.itemResults and mock.itemResults[i] end,
+}
+
+-- mail
+SendMailFrame = CreateFrame("Frame", "SendMailFrame", MailFrame)
+SendMailNameEditBox = CreateFrame("EditBox", "SendMailNameEditBox", SendMailFrame)
+SendMailSubjectEditBox = CreateFrame("EditBox", "SendMailSubjectEditBox", SendMailFrame)
+function SendMail(recipient, subject, body) record("SendMail", recipient) end
+
+-- taxi
+mock.taxiNodes = { { name = "Stormwind", type = "CURRENT" }, { name = "Goldshire", type = "REACHABLE" } }
+function NumTaxiNodes() return #mock.taxiNodes end
+function TaxiNodeGetType(i) return mock.taxiNodes[i].type end
+function TaxiNodeName(i) return mock.taxiNodes[i].name end
+function TakeTaxiNode(i) record("TakeTaxiNode", i) end
+
+-- auras / weapon
+mock.playerBuffs = {}
+AuraUtil = {
+    ForEachAura = function(unit, filter, max, fn, packed)
+        for _, name in ipairs(mock.playerBuffs) do fn({ name = name }) end
+    end,
+}
+C_Secrets = { ShouldAurasBeSecret = function() return mock.aurasSecret or false end }
+function GetWeaponEnchantInfo() return mock.mainHandEnchant or false, 0, 0, 0 end
+function GetInventoryItemID(unit, slot) if slot == 16 then return 1234 end; if slot == 0 then return mock.ammoID end end
+function GetInventoryItemCount(unit, slot) if slot == 0 then return mock.ammoCount or 0 end return 1 end
+ActionButton1 = CreateFrame("Button", "ActionButton1", UIParent)
+ActionButton1.HotKey = ActionButton1:CreateFontString()
+ActionButton1.Name = ActionButton1:CreateFontString()
+ActionButton1.icon = ActionButton1:CreateTexture()
+function ActionButton_UpdateRangeIndicator(button, checksRange, inRange) record("ActionButton_UpdateRangeIndicator", button) end
+ObjectiveTrackerFrame = CreateFrame("Frame", "ObjectiveTrackerFrame", UIParent)
+StanceBar = CreateFrame("Frame", "StanceBar", UIParent)
+C_PartyInfo.DoCountdown = function(seconds) record("DoCountdown", seconds) end
 
 C_AddOns = {
     GetAddOnMetadata = function(addon, field) return field == "Version" and "1.0.0-test" or nil end,

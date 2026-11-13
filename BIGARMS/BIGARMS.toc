@@ -24,6 +24,15 @@ Modules\Items.lua
 Modules\Quest.lua
 Modules\Combat.lua
 Modules\Map.lua
+Modules\WorldMap.lua
+Modules\Loot.lua
+Modules\Group.lua
+Modules\Nameplates.lua
+Modules\ActionBars.lua
+Modules\Vendor.lua
+Modules\Gathering.xml
+Modules\Gathering.lua
+Modules\Extras.lua
 Modules\System.lua
 Core\Options.lua
 Core\Slash.lua

@@ -19,9 +19,11 @@ local UI = ns:NewModule("Interface", {
         maxZoom = 2.6,
         actionCam = "KEEP", -- KEEP | OFF | BASIC | FULL
         questSparkle = true,
+        hideStanceBar = false,
     },
     options = {
         { key = "hideGryphons", type = "toggle", label = "UI_GRYPHONS" },
+        { key = "hideStanceBar", type = "toggle", label = "UI_STANCE_BAR", tooltip = "UI_STANCE_BAR_TT" },
         { key = "errorFilter", type = "toggle", label = "UI_ERROR_FILTER", tooltip = "UI_ERROR_FILTER_TT" },
         { key = "hideZoneText", type = "toggle", label = "UI_ZONE_TEXT", tooltip = "UI_ZONE_TEXT_TT" },
         { key = "classColorFrames", type = "toggle", label = "UI_CLASS_FRAMES", tooltip = "UI_CLASS_FRAMES_TT" },
@@ -48,6 +50,26 @@ function UI:ApplyGryphons()
         local frame = ns.Resolve(path)
         if frame and frame.SetAlpha then
             frame:SetAlpha(hide and 0 or 1)
+        end
+    end
+end
+
+-- Stance bar --------------------------------------------------------------------
+
+function UI:ApplyStanceBar()
+    local bar = ns.FirstFrame("StanceBar", "StanceBarFrame")
+    if not bar or not bar.SetAlpha then
+        return
+    end
+    if self.db.hideStanceBar then
+        bar:SetAlpha(0)
+        if bar.EnableMouse then
+            bar:EnableMouse(false)
+        end
+    else
+        bar:SetAlpha(1)
+        if bar.EnableMouse then
+            bar:EnableMouse(true)
         end
     end
 end
@@ -308,6 +330,7 @@ end
 
 function UI:ApplyAll()
     self:ApplyGryphons()
+    self:ApplyStanceBar()
     self:ApplyErrorFilter()
     self:ApplyZoneText()
     self:ApplyHitIndicator()
@@ -332,11 +355,12 @@ end
 
 function UI:OnDisable()
     local saved = {}
-    for _, key in ipairs({ "hideGryphons", "errorFilter", "hideZoneText", "hideHitIndicator" }) do
+    for _, key in ipairs({ "hideGryphons", "errorFilter", "hideZoneText", "hideHitIndicator", "hideStanceBar" }) do
         saved[key] = self.db[key]
         self.db[key] = false
     end
     self:ApplyGryphons()
+    self:ApplyStanceBar()
     self:ApplyErrorFilter()
     self:ApplyZoneText()
     self:ApplyHitIndicator()
@@ -607,11 +631,29 @@ end
 
 local Reputation = ns:NewModule("Reputation", {
     group = "INTERFACE",
-    defaults = { enabled = true },
+    defaults = { enabled = true, autoWatch = true },
     options = {
+        { key = "autoWatch", type = "toggle", label = "REP_AUTO_WATCH", tooltip = "REP_AUTO_WATCH_TT" },
         { type = "description", text = "REP_HELP" },
     },
 })
+
+function Reputation:Watch(factionID)
+    if not self.db.autoWatch or not factionID then
+        return
+    end
+    if C_Reputation and C_Reputation.SetWatchedFactionByID then
+        pcall(C_Reputation.SetWatchedFactionByID, factionID)
+    elseif SetWatchedFactionIndex and GetNumFactions and GetFactionInfo then
+        for i = 1, GetNumFactions() do
+            local id = select(14, GetFactionInfo(i))
+            if id == factionID then
+                pcall(SetWatchedFactionIndex, i)
+                return
+            end
+        end
+    end
+end
 
 local function FactionList()
     local list = {}
@@ -656,6 +698,9 @@ function Reputation:OnUpdate()
             end
             local color = change > 0 and "|cff40ff40+" or "|cffff4040"
             self:Print(L.REP_CHANGE:format(info.name or "?", color .. change .. "|r", standingText, progress))
+            if change > 0 then
+                self:Watch(factionID)
+            end
         end
     end
 end

@@ -100,12 +100,24 @@ local function ShowTooltip(owner, anchor)
     if lowest then
         GameTooltip:AddDoubleLine(L.DUR_TOOLTIP, ("%d%%"):format(lowest), 1, 0.82, 0, 1, 1, 1)
     end
+    if GetBindLocation then
+        GameTooltip:AddDoubleLine(L.HOME_TOOLTIP, GetBindLocation() or "?", 1, 0.82, 0, 1, 1, 1)
+    end
+    local volume = tonumber(ns.GetCVar("Sound_MasterVolume"))
+    if volume then
+        GameTooltip:AddDoubleLine(L.VOLUME_TOOLTIP, ("%d%%"):format(volume * 100 + 0.5), 1, 0.82, 0, 1, 1, 1)
+    end
+    local errors = ns.db.errors and #ns.db.errors or 0
+    if errors > 0 then
+        GameTooltip:AddDoubleLine(L.EC_TOOLTIP, tostring(errors), 1, 0.82, 0, 1, 0.4, 0.4)
+    end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(L.MINIMAP_LEFT, 0.8, 0.8, 0.8)
     GameTooltip:AddLine(L.MINIMAP_RIGHT, 0.8, 0.8, 0.8)
     GameTooltip:AddLine(L.MINIMAP_MIDDLE, 0.8, 0.8, 0.8)
     if owner == button then
         GameTooltip:AddLine(L.MINIMAP_DRAG, 0.8, 0.8, 0.8)
+        GameTooltip:AddLine(L.MINIMAP_WHEEL, 0.8, 0.8, 0.8)
     end
     GameTooltip:Show()
 end
@@ -170,6 +182,18 @@ function MinimapButton:Create()
         self:SetScript("OnUpdate", nil)
         self:UnlockHighlight()
     end)
+    if button.EnableMouseWheel then
+        button:EnableMouseWheel(true)
+        button:SetScript("OnMouseWheel", function(self, delta)
+            if ns.AdjustVolume then
+                local percent = ns.AdjustVolume(delta > 0 and 0.05 or -0.05)
+                ns.Print(L.VOLUME_NOW:format(percent))
+                if GameTooltip:IsOwned(self) then
+                    ShowTooltip(self, "ANCHOR_LEFT")
+                end
+            end
+        end)
+    end
 
     self:UpdatePosition()
     self:Refresh()

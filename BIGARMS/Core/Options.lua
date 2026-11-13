@@ -11,7 +11,7 @@ local L = ns.L
 
 local VAR_PREFIX = "BIGARMS_"
 
-ns.GROUPS = { "AUTOMATION", "CHAT", "TOOLTIP", "MINIMAP", "INTERFACE", "ITEMS", "QUEST", "COMBAT", "MAP", "SYSTEM" }
+ns.GROUPS = { "AUTOMATION", "LOOT", "GROUP", "CHAT", "TOOLTIP", "MINIMAP", "NAMEPLATES", "INTERFACE", "ITEMS", "QUEST", "COMBAT", "MAP", "SYSTEM" }
 
 local function GroupTitle(group)
     return L["GROUP_" .. group] or group

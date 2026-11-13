@@ -1,0 +1,15 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/">
+  <Frame name="BIGARMSGatherPinTemplate" mixin="BIGARMSGatherPinMixin" virtual="true">
+    <Size x="14" y="14"/>
+    <Layers>
+      <Layer level="ARTWORK">
+        <Texture parentKey="Icon" setAllPoints="true"/>
+      </Layer>
+    </Layers>
+    <Scripts>
+      <OnLoad method="OnLoad"/>
+      <OnEnter method="OnMouseEnter"/>
+      <OnLeave method="OnMouseLeave"/>
+    </Scripts>
+  </Frame>
+</Ui>
